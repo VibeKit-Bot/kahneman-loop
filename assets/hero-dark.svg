@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>wysiati: replies needing a correction fell from 25% to 15% on real production agent turns</title>
+  <rect x="0.5" y="0.5" width="1279" height="639" rx="16" fill="#1a1a19" stroke="rgba(255,255,255,0.10)"/>
+
+  <text x="64" y="118" font-size="30" font-weight="700" fill="#f0efec">wysiati</text>
+  <text x="64" y="146" font-size="16" fill="#898781">What You See Is All There Is</text>
+  <text font-size="36" font-weight="700" fill="#f0efec">
+    <tspan x="64" y="216">Agents say &#8220;done&#8221;</tspan>
+    <tspan x="64" y="258">when their own check</tspan>
+    <tspan x="64" y="300">said &#8220;failed&#8221;.</tspan>
+  </text>
+  <text x="64" y="400" font-size="76" font-weight="700"><tspan fill="#898781">25%</tspan><tspan fill="#898781" font-weight="400"> &#8594; </tspan><tspan fill="#3987e5">15%</tspan></text>
+  <text font-size="18" fill="#c3c2b7">
+    <tspan x="64" y="440">replies needing a correction, today vs. with wysiati,</tspan>
+    <tspan x="64" y="464">on real production agent turns where it applies</tspan>
+  </text>
+  <text x="64" y="526" font-size="16" fill="#c3c2b7">One file  ·  zero dependencies  ·  drop-in Claude Code hook</text>
+
+  <line x1="592" y1="96" x2="592" y2="530" stroke="#2c2c2a"/>
+
+  <text x="640" y="118" font-size="20" font-weight="700" fill="#f0efec">Replies needing a correction <tspan font-weight="400" fill="#898781">(lower is better)</tspan></text>
+  <circle cx="647" cy="146" r="7" fill="#898781"/>
+  <text x="662" y="151" font-size="15" fill="#c3c2b7">Today</text>
+  <circle cx="734" cy="146" r="7" fill="#3987e5"/>
+  <text x="749" y="151" font-size="15" fill="#c3c2b7">With wysiati</text>
+
+  <line x1="640" y1="186" x2="640" y2="526" stroke="#383835" stroke-width="1"/>
+      <text x="640" y="550" font-size="14" fill="#898781" text-anchor="middle">0%</text>
+<line x1="820" y1="186" x2="820" y2="526" stroke="#2c2c2a" stroke-width="1"/>
+      <text x="820" y="550" font-size="14" fill="#898781" text-anchor="middle">20%</text>
+<line x1="1000" y1="186" x2="1000" y2="526" stroke="#2c2c2a" stroke-width="1"/>
+      <text x="1000" y="550" font-size="14" fill="#898781" text-anchor="middle">40%</text>
+<line x1="1180" y1="186" x2="1180" y2="526" stroke="#2c2c2a" stroke-width="1"/>
+      <text x="1180" y="550" font-size="14" fill="#898781" text-anchor="middle">60%</text>
+  <text x="640" y="206" font-size="17" fill="#f0efec" font-weight="700">All turns where it applies</text>
+      <line x1="853" y1="236" x2="791" y2="236" stroke="rgba(57,135,229,0.40)" stroke-width="4" stroke-linecap="round"/>
+         <path d="M 797 230 L 788 236 L 797 242" fill="none" stroke="rgba(57,135,229,0.40)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="865" cy="236" r="8" fill="#898781" stroke="#1a1a19" stroke-width="2"/>
+      <circle cx="775" cy="236" r="9" fill="#3987e5" stroke="#1a1a19" stroke-width="2"/>
+      <text x="881" y="242" font-size="17" fill="#c3c2b7">25%</text>
+      <text x="759" y="242" font-size="17" font-weight="700" fill="#f0efec" text-anchor="end">15%</text>
+<text x="640" y="296" font-size="17" fill="#f0efec">When the original reply was wrong</text>
+      <line x1="1141" y1="326" x2="917" y2="326" stroke="rgba(57,135,229,0.40)" stroke-width="4" stroke-linecap="round"/>
+         <path d="M 923 320 L 914 326 L 923 332" fill="none" stroke="rgba(57,135,229,0.40)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="1153" cy="326" r="8" fill="#898781" stroke="#1a1a19" stroke-width="2"/>
+      <circle cx="901" cy="326" r="9" fill="#3987e5" stroke="#1a1a19" stroke-width="2"/>
+      <text x="1169" y="332" font-size="17" fill="#c3c2b7">57%</text>
+      <text x="885" y="332" font-size="17" font-weight="700" fill="#f0efec" text-anchor="end">29%</text>
+<text x="640" y="386" font-size="17" fill="#f0efec">When the agent&#8217;s own check had failed<tspan fill="#898781" font-weight="400">  ·  went back to work every time</tspan></text>
+      <line x1="898" y1="416" x2="656" y2="416" stroke="rgba(57,135,229,0.40)" stroke-width="4" stroke-linecap="round"/>
+         <path d="M 662 410 L 653 416 L 662 422" fill="none" stroke="rgba(57,135,229,0.40)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="910" cy="416" r="8" fill="#898781" stroke="#1a1a19" stroke-width="2"/>
+      <circle cx="640" cy="416" r="9" fill="#3987e5" stroke="#1a1a19" stroke-width="2"/>
+      <text x="926" y="422" font-size="17" fill="#c3c2b7">30%</text>
+      <text x="624" y="422" font-size="17" font-weight="700" fill="#f0efec" text-anchor="end">0%</text>
+<text x="640" y="476" font-size="17" fill="#f0efec">When the original reply was already right<tspan fill="#898781" font-weight="400">  ·  no harm</tspan></text>
+      
+      <circle cx="712" cy="506" r="8" fill="#898781" stroke="#1a1a19" stroke-width="2"/>
+      <circle cx="703" cy="506" r="9" fill="#3987e5" stroke="#1a1a19" stroke-width="2"/>
+      <text x="728" y="512" font-size="17" fill="#c3c2b7">8%</text>
+      <text x="687" y="512" font-size="17" font-weight="700" fill="#f0efec" text-anchor="end">7%</text>
+
+  <line x1="64" y1="578" x2="1216" y2="578" stroke="#2c2c2a"/>
+  <text x="64" y="608" font-size="15" fill="#898781">About 86 extra tokens per affected tool result  ·  one extra model round on 0.7% of turns  ·  github.com/VibeKit-Bot/wysiati</text>
+</svg>
