@@ -5,10 +5,10 @@
   <text x="64" y="118" font-size="30" font-weight="700" fill="#f0efec">wysiati</text>
   <text x="64" y="146" font-size="16" fill="#898781">What You See Is All There Is</text>
   <text font-size="36" font-weight="700" fill="#f0efec">
-    <tspan x="64" y="216">Agents say &#8220;done&#8221;</tspan>
-    <tspan x="64" y="258">when their own check</tspan>
-    <tspan x="64" y="300">said &#8220;failed&#8221;.</tspan>
+    <tspan x="64" y="216">AI agents say &#8220;done&#8221;</tspan>
+    <tspan x="64" y="258">when it isn&#8217;t.</tspan>
   </text>
+  <text x="64" y="298" font-size="20" fill="#c3c2b7">The deploy hadn&#8217;t finished. The test had failed.</text>
   <text x="64" y="400" font-size="76" font-weight="700"><tspan fill="#898781">25%</tspan><tspan fill="#898781" font-weight="400"> &#8594; </tspan><tspan fill="#3987e5">15%</tspan></text>
   <text font-size="18" fill="#c3c2b7">
     <tspan x="64" y="440">replies needing a correction, today vs. with wysiati,</tspan>

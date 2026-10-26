@@ -5,7 +5,8 @@
   <img alt="Replies needing a correction fell from 25% to 15% on real production agent turns where wysiati applies; from 57% to 29% when the original reply was wrong; from 30% to 0% when the agent's own check had failed (it went back to work every time); and stayed level, 8% to 7%, when the original reply was already right." src="assets/hero-light.svg">
 </picture>
 
-**Your agent says "done" when its own check said "failed". This fixes that, measured on production traffic.**
+**AI agents say "done" when it isn't.** The deploy hadn't finished, or the test the agent just ran had failed, and
+it tells the user it's fixed anyway. wysiati puts what really happened in front of the agent before it replies.
 
 On real production turns where it applies, replies that needed a correction fell from **25% to about 15%**
 (95% CI for the drop: 4 to 18 points). It costs about 86 extra prompt tokens on an affected tool result,
