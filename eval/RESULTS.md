@@ -64,9 +64,15 @@ often still claims the rest is done. So the trigger is the failed check alone.
 ## Cost
 
 - **Tokens:** about 86 extra prompt tokens on average per affected tool result, measured as the
-  prompt-size difference between arms.
-- **Latency:** verdicts add no calls. The hand-back adds one model round, and the work it triggers,
-  on about 0.7% of turns.
+  prompt-size difference between arms. The hand-back adds one model round, and the work it
+  triggers, on about 0.7% of turns (1 in 140). Averaged over every turn, that's under 1% more tokens.
+- **Latency:** verdicts add no calls. Averaged over every turn, the hand-back adds about 0.3 seconds,
+  under 1% of the average turn's time.
+- **How the hand-back's cost was measured:** VibeKit already runs the same hand-back message in
+  production for other failed checks. We took the real tokens and wall-clock time of those
+  continuation turns over the same three weeks and scaled them by how often wysiati's hand-back
+  fired. On average a continuation took slightly more tokens than an ordinary turn, almost all of
+  them cached reads of the context the agent already had.
 - **Population effect:** about 0.5% of all agent turns end in a reply that no longer needs
   correcting, roughly 1 in 200.
 

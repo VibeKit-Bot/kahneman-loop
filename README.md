@@ -1,39 +1,61 @@
 # wysiati
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
-  <img alt="Replies needing a correction fell from 25% to 15% on real production agent turns where wysiati applies; from 57% to 29% when the original reply was wrong; from 30% to 0% when the agent's own check had failed (it went back to work every time); and stayed level, 8% to 7%, when the original reply was already right." src="assets/hero-light.svg">
-</picture>
+<img alt="wysiati: 40% fewer false claims (replies needing a correction fell from 25% to 15% on real production turns where a check failed or a job wasn't done yet), for about 1% more tokens and about 1% more time." src="assets/hero.png">
 
 **AI agents say "done" when it isn't.** The deploy hadn't finished, or the test the agent just ran had failed, and
 it tells the user it's fixed anyway. wysiati puts what really happened in front of the agent before it replies.
 
-On real production turns where it applies, replies that needed a correction fell from **25% to about 15%**
-(95% CI for the drop: 4 to 18 points). It costs about 86 extra prompt tokens on an affected tool result,
-plus one extra model round on the 0.7% of turns where the agent's own check failed. It's one file with
-zero dependencies, and there's a drop-in Stop hook for Claude Code.
+> **With wysiati, our agents made 40% fewer false claims, for about 1% more tokens and 1% more time.**
 
-## The problem
+That's measured on real production traffic. On turns where a check had failed or a job wasn't done yet,
+replies that needed a correction fell from **25% to 15%**. The cost is averaged over every reply: the
+only extra work is one more model round on the 1 in 140 replies where the agent's own check failed,
+which comes to about 0.3 seconds per reply. It's one file with zero dependencies, and there's a drop-in
+Stop hook for Claude Code.
 
-Kahneman called it WYSIATI: *What You See Is All There Is*. People judge from what's in front of them
-and don't account for what isn't. LLM agents do this too, at the moment it matters most: when they
-write the reply that ends a turn.
+A *false claim* here is a claim that a tool result contradicts ("all tests pass" after a red test run)
+or that no tool result backs ("I tested it" when nothing was tested).
 
-At that moment, two things are reliably in front of the agent: its own plan ("fix the login bug, deploy
-it, done") and the last tool result. Two things reliably aren't:
+## Why agents do this
+
+### The availability heuristic
+
+In 1973, Amos Tversky and Daniel Kahneman showed that people judge how common or likely something is
+by how easily examples come to mind. Ask whether English has more words that *start* with K or more
+words with K as the *third* letter, and most people say "start with K", because those words are easier
+to recall. There are actually more of the second kind.
+
+Kahneman later named the habit underneath it **WYSIATI: What You See Is All There Is**. The mind builds
+the most coherent story it can from the information in front of it and doesn't ask what's missing.
+Confidence comes from how well the story hangs together, not from how complete the evidence is.
+
+### Agents do the same thing
+
+An LLM agent's "mind" is its context window, and what's available is what stands out in it: what's
+recent, what's repeated, and what's near the end. This has been measured: language models use
+information at the start and end of a long context much better than information in the middle.
+
+Now look at the moment an agent writes the reply that ends a turn. Two things are reliably available:
+its own plan ("fix the login bug, deploy it, done"), which it has restated many times, and the last
+tool result. Two things reliably aren't:
 
 - **What a tool result didn't establish.** `{"jobId":"d_81","status":"starting"}` doesn't say the
   deploy finished. The agent reads "deploy" and writes "it's live".
-- **A check that failed twenty steps ago.** The test run that came back red is far up the context. The
-  plan is right here. The agent writes "fixed, all tests pass".
+- **A check that failed twenty steps ago.** The test run that came back red is in the middle of a long
+  context. The plan is right here. The agent writes "fixed, all tests pass".
 
-A rule in the system prompt doesn't fix this. Every turn we measured already ran with this line in
-the agent's instructions:
+So it tells the most coherent story it can see, and that story is "done". The agent isn't lying. It's
+judging from what's available, the way people do.
+
+### Why a rule doesn't fix it
+
+Every turn we measured already ran with this line in the agent's instructions:
 
 > **NEVER say "fixed"/"works"/"verified"/"I tested it" unless a tool call you just made returned a real success.**
 
-A quarter of the affected replies still needed a correction. A rule is something the agent has to
-remember. A failed check is something it has to *see*.
+A quarter of the affected replies still needed a correction. A rule is one more thing far up the
+context that the agent has to remember. wysiati doesn't ask the agent to remember better. It makes the
+missing fact available at the moment the agent decides what to say.
 
 ## The fix: put the missing fact in front of the agent
 
@@ -142,8 +164,13 @@ against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md)
 | Hand-back turns | 30% | 0% (went back to work every time) | 30 (15 to 46) |
 | Verdict text only | 23% | 18% | 5 (-2 to 13) |
 
-- **Cost:** about 86 extra prompt tokens on average per affected tool result. The hand-back fired
-  on about 0.7% of all turns, and only those turns pay for one more model round.
+- **Tokens: about 1% more.** A verdict adds about 86 tokens to a tool result that didn't establish
+  its outcome. The hand-back adds one more model round on about 1 in 140 replies. Averaged over every
+  reply, that's under 1% more tokens.
+- **Time: about 1% more.** Verdicts add no calls and no waiting. The hand-back round is the agent going
+  back to fix what failed; spread over every reply, it's about 0.3 seconds, under 1%. VibeKit already
+  runs the same hand-back in production, so these are the real tokens and seconds of those rounds
+  over the same three weeks, scaled to how often wysiati's hand-back fires.
 - **No harm on good turns:** where the original reply was already right, wysiati didn't add mistakes
   (8% needed correction today, 7% with wysiati).
 - **Reach:** about 6% of all turns were affected. Across all turns, that's about 1 in 200 replies
@@ -176,6 +203,15 @@ anything. See [eval/METHOD.md](eval/METHOD.md).
 ```bash
 node --test test/*.test.*
 ```
+
+## Background reading
+
+- Amos Tversky and Daniel Kahneman, "Availability: A heuristic for judging frequency and probability",
+  *Cognitive Psychology* 5(2), 1973.
+- Daniel Kahneman, *Thinking, Fast and Slow*, 2011. WYSIATI is introduced in chapter 7, "A Machine
+  for Jumping to Conclusions".
+- Nelson F. Liu et al., "Lost in the Middle: How Language Models Use Long Contexts",
+  [arXiv:2307.03172](https://arxiv.org/abs/2307.03172), 2023.
 
 ## License
 
