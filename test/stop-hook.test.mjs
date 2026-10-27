@@ -16,7 +16,7 @@ const say = text => ({ type: 'assistant', message: { role: 'assistant', content:
 const lines = entries => entries.map(e => JSON.stringify(e));
 
 function runHook(entries, extra = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'wysiati-'));
+  const dir = mkdtempSync(join(tmpdir(), 'kahneman-loop-'));
   const path = join(dir, 'session.jsonl');
   writeFileSync(path, lines(entries).join('\n'));
   return execFileSync('node', [HOOK], { input: JSON.stringify({ transcript_path: path, stop_hook_active: false, ...extra }) }).toString();

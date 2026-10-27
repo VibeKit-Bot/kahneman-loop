@@ -7,7 +7,7 @@ it to check its work. Several models were in use. This is the replay described i
 
 ## Scope
 
-- About 6% of agent turns were affected: wysiati would have changed something the agent saw before
+- About 6% of agent turns were affected: the Kahneman loop would have changed something the agent saw before
   its final reply.
 - We scored about 70% of those. The rest were left out because the platform no longer gives that
   tool result, the change came after the reply, an existing mechanism had already handed the turn
@@ -15,7 +15,7 @@ it to check its work. Several models were in use. This is the replay described i
 
 ## Replies needing correction
 
-Arm A gets today's tool results, and arm B gets the wysiati ones. The drop is A minus B, in
+Arm A gets today's tool results, and arm B gets the Kahneman loop ones. The drop is A minus B, in
 percentage points. The CI is a 95% bootstrap over turns.
 
 | Subset | Original reply | Arm A | Arm B | Drop (95% CI) | Acted A / B |
@@ -70,7 +70,7 @@ often still claims the rest is done. So the trigger is the failed check alone.
   under 1% of the average turn's time.
 - **How the hand-back's cost was measured:** VibeKit already runs the same hand-back message in
   production for other failed checks. We took the real tokens and wall-clock time of those
-  continuation turns over the same three weeks and scaled them by how often wysiati's hand-back
+  continuation turns over the same three weeks and scaled them by how often the Kahneman loop's hand-back
   fired. On average a continuation took slightly more tokens than an ordinary turn, almost all of
   them cached reads of the context the agent already had.
 - **Population effect:** about 0.5% of all agent turns end in a reply that no longer needs

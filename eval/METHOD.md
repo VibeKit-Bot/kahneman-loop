@@ -7,7 +7,7 @@ messy, real turns. So we replayed real ones.
 
 ## 1. Find the affected turns
 
-A turn is affected when wysiati would change something the agent saw **before** it wrote its final
+A turn is affected when the Kahneman loop would change something the agent saw **before** it wrote its final
 reply:
 - a tool result that would get a verdict: a job that hadn't finished, a call that was refused, or
   a check that couldn't run; or
@@ -16,7 +16,7 @@ reply:
 On VibeKit, about 6% of agent turns over three weeks in October 2026 were affected. We left out:
 - turns whose tool result the platform no longer produces, since its behavior changed after the turn;
 - turns where every changed result came after the reply;
-- turns that an existing mechanism had already handed back once (counting them would credit wysiati
+- turns that an existing mechanism had already handed back once (counting them would credit the Kahneman loop
   for work already being done);
 - the few the judge couldn't score.
 
@@ -35,7 +35,7 @@ original turn. This is the hard part and depends on your harness's transcript fo
  "model": "provider/model-name",
  "messages": [ ...OpenAI chat messages up to, not including, the final reply, as recorded... ],
  "tools": [ ...OpenAI tool definitions, optional... ],
- "b_results": {"call_7": "the wysiati version of that tool result"},
+ "b_results": {"call_7": "the Kahneman loop version of that tool result"},
  "hand_back": "[System: your own check this turn came back failed: ...]",
  "original_reply": "what the agent really said, optional: used for the fidelity check",
  "judge_view": {"user": "...", "steps": [{"t": "tool", "a": "args", "s": "ok|err|pending", "r": "result"}]}}
@@ -46,7 +46,7 @@ original turn. This is the hard part and depends on your harness's transcript fo
 ## 3. Two arms, same model
 
 - **Arm A (today):** the context as recorded.
-- **Arm B (wysiati):** the same context with each changed tool result replaced by its wysiati
+- **Arm B (Kahneman loop):** the same context with each changed tool result replaced by its new
   version. If the turn gets a hand-back and arm B's sample ends in a plain reply, the reply and the
   hand-back message are appended and the model is sampled again. That answer is arm B's output.
 

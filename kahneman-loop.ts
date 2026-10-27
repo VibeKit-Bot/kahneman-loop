@@ -1,9 +1,10 @@
 /**
- * wysiati: "What You See Is All There Is" (Kahneman). An agent judges only
- * from what is in its context. When a tool result says "deploy started", the
- * agent tells the user "it's live", because nothing in front of it says
- * otherwise. When its own check fails, it still writes "verified", because
- * the failure sits twenty steps back and the plan sits right here.
+ * The Kahneman loop, after Kahneman's WYSIATI ("What You See Is All There
+ * Is"). An agent judges only from what is in its context. When a tool result
+ * says "deploy started", the agent tells the user "it's live", because
+ * nothing in front of it says otherwise. When its own check fails, it still
+ * writes "verified", because the failure sits twenty steps back and the plan
+ * sits right here.
  *
  * Two fixes, both measured on production traffic (README.md, eval/RESULTS.md):
  *

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CheckLedger, handBack, jobVerdict, runTurnWithHandBack, verdict, withVerdict } from '../wysiati.ts';
+import { CheckLedger, handBack, jobVerdict, runTurnWithHandBack, verdict, withVerdict } from '../kahneman-loop.ts';
 
 test('the verdict comes first in a tool result', () => {
   const out = withVerdict({ status: 'starting', jobId: 'j1' }, verdict.notDoneYet('live', 'starting', 'its status is "done"'));

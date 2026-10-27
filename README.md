@@ -1,11 +1,12 @@
-# wysiati
+# The Kahneman loop
 
-<img alt="wysiati: 40% fewer false claims (replies needing a correction fell from 25% to 15% on real production turns where a check failed or a job wasn't done yet), for about 1% more tokens and about 1% more time." src="assets/hero.png">
+<img alt="The Kahneman loop: 40% fewer false claims (replies needing a correction fell from 25% to 15% on real production turns where a check failed or a job wasn't done yet), for about 1% more tokens and about 1% more time." src="assets/hero.png">
 
 **AI agents say "done" when it isn't.** The deploy hadn't finished, or the test the agent just ran had failed, and
-it tells the user it's fixed anyway. wysiati puts what really happened in front of the agent before it replies.
+it tells the user it's fixed anyway. The Kahneman loop puts what really happened in front of the agent before
+it replies, and hands its own failed check back once before it can say "done".
 
-> **With wysiati, our agents made 40% fewer false claims, for about 1% more tokens and 1% more time.**
+> **With the Kahneman loop, our agents made 40% fewer false claims, for about 1% more tokens and 1% more time.**
 
 That's measured on real production traffic. On turns where a check had failed or a job wasn't done yet,
 replies that needed a correction fell from **25% to 15%**. The cost is averaged over every reply: the
@@ -14,7 +15,12 @@ which comes to about 0.3 seconds per reply. It's one file with zero dependencies
 Stop hook for Claude Code.
 
 A *false claim* here is a claim that a tool result contradicts ("all tests pass" after a red test run)
-or that no tool result backs ("I tested it" when nothing was tested).
+or that no tool result backs ("I tested it" when nothing was tested). The failure has a few names
+already: outcome hallucination, hallucinated success, illusory completion (see [Related work](#related-work)).
+
+The [Ralph loop](https://ghuntley.com/ralph/) keeps an agent going round on the same task. The Kahneman
+loop stops it from saying the task is done before it is. It's named after Daniel Kahneman, whose idea
+of WYSIATI ("What You See Is All There Is", below) is the reason it works.
 
 ## Why agents do this
 
@@ -54,7 +60,7 @@ Every turn we measured already ran with this line in the agent's instructions:
 > **NEVER say "fixed"/"works"/"verified"/"I tested it" unless a tool call you just made returned a real success.**
 
 A quarter of the affected replies still needed a correction. A rule is one more thing far up the
-context that the agent has to remember. wysiati doesn't ask the agent to remember better. It makes the
+context that the agent has to remember. The Kahneman loop doesn't ask the agent to remember better. It makes the
 missing fact available at the moment the agent decides what to say.
 
 ## The fix: put the missing fact in front of the agent
@@ -94,7 +100,7 @@ ones; see [eval/RESULTS.md](eval/RESULTS.md).)
 ### Claude Code: one hook
 
 ```bash
-git clone https://github.com/VibeKit-Bot/wysiati ~/wysiati
+git clone https://github.com/VibeKit-Bot/kahneman-loop ~/kahneman-loop
 ```
 
 Add to `.claude/settings.json` in your project (or `~/.claude/settings.json` for every project):
@@ -102,7 +108,7 @@ Add to `.claude/settings.json` in your project (or `~/.claude/settings.json` for
 ```json
 {
   "hooks": {
-    "Stop": [{ "hooks": [{ "type": "command", "command": "node ~/wysiati/claude-code/stop-hook.mjs" }] }]
+    "Stop": [{ "hooks": [{ "type": "command", "command": "node ~/kahneman-loop/claude-code/stop-hook.mjs" }] }]
   }
 }
 ```
@@ -115,11 +121,11 @@ at the top of [claude-code/stop-hook.mjs](claude-code/stop-hook.mjs).
 
 ### Your own agent harness: copy one file
 
-Copy [wysiati.ts](wysiati.ts) into your harness. Node 22.6+ runs it as is, and any TypeScript
+Copy [kahneman-loop.ts](kahneman-loop.ts) into your harness. Node 22.6+ runs it as is, and any TypeScript
 toolchain compiles it. There are three touch points:
 
 ```ts
-import { CheckLedger, jobVerdict, runTurnWithHandBack, verdict, withVerdict } from './wysiati';
+import { CheckLedger, jobVerdict, runTurnWithHandBack, verdict, withVerdict } from './kahneman-loop';
 
 // 1. In your tool executor: put the verdict first on results that don't establish the outcome.
 const job = await startDeploy(app);
@@ -152,11 +158,11 @@ alreadyHandedBack })` where your turn ends. It returns the message to send, or `
 
 These numbers come from production traffic on [VibeKit](https://vibekit.bot), a hosted agent that
 builds and runs apps, over three weeks in October 2026. Each affected turn was replayed with its
-real context on the same model. Arm A got today's tool results, and arm B got the wysiati results
-plus the hand-back. Each arm got two samples. A blind judge scored every reply on its own, shuffled,
+real context on the same model. Arm A got today's tool results, and arm B got the Kahneman loop's
+results plus the hand-back. Each arm got two samples. A blind judge scored every reply on its own, shuffled,
 against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md).
 
-| | Replies needing correction: today | With wysiati | Drop, points (95% CI) |
+| | Replies needing correction: today | With the Kahneman loop | Drop, points (95% CI) |
 |---|---:|---:|---:|
 | **All affected turns** | 25% | **15%** | **10 (4 to 18)** |
 | Turns where the original reply was wrong | 57% | 29% | 28 (12 to 43) |
@@ -170,9 +176,9 @@ against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md)
 - **Time: about 1% more.** Verdicts add no calls and no waiting. The hand-back round is the agent going
   back to fix what failed; spread over every reply, it's about 0.3 seconds, under 1%. VibeKit already
   runs the same hand-back in production, so these are the real tokens and seconds of those rounds
-  over the same three weeks, scaled to how often wysiati's hand-back fires.
-- **No harm on good turns:** where the original reply was already right, wysiati didn't add mistakes
-  (8% needed correction today, 7% with wysiati).
+  over the same three weeks, scaled to how often the Kahneman loop's hand-back fires.
+- **No harm on good turns:** where the original reply was already right, the loop didn't add mistakes
+  (8% needed correction today, 7% with the loop).
 - **Reach:** about 6% of all turns were affected. Across all turns, that's about 1 in 200 replies
   that no longer needs correcting.
 
@@ -182,7 +188,7 @@ against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md)
   verdicts plus the hand-back together.
 - **What happened after a hand-back wasn't measured.** In every sample the agent went back to work
   instead of replying, so it never repeated the false claim. Its later reply was not replayed. If you
-  count only samples that ended in a reply, the rate is 28% today and 17% with wysiati.
+  count only samples that ended in a reply, the rate is 28% today and 17% with the loop.
 - **The data comes from one platform and one month.** The mix was app building, deploys and UI
   checks, with several models. Your traffic may differ, so [measure it](eval/).
 - **The judge is a model** (Claude Sonnet 5.5, a fixed rubric, blind to which arm wrote each reply).
@@ -203,6 +209,24 @@ anything. See [eval/METHOD.md](eval/METHOD.md).
 ```bash
 node --test test/*.test.*
 ```
+
+## Related work
+
+Others have named and measured the same failure. What the Kahneman loop adds is the trigger (the agent's
+own failed check, not the wording of its reply) and a measured cost on production traffic.
+
+- **Illusory completion.** "When Is Enough Not Enough? Illusory Completion in Search Agents",
+  [arXiv:2602.07549](https://arxiv.org/abs/2602.07549), 2026. Search agents stop before they have
+  checked every part of the question. Their fix keeps a ledger of what is still unverified, updated
+  by an extra model call at each step: up to 11.6 points more accuracy and 26.5 points fewer
+  under-verified answers. The cost of those calls isn't reported.
+- **Outcome hallucination.** [TestMu AI on agent action hallucination](https://www.testmuai.com/learning-hub/agent-action-hallucination/).
+  When a tool returned a success-shaped "accepted" payload, the agent reported "done" 10 times out of
+  10; an explicit error brought that to 0 of 10 (one model, 10 trials). That's the same idea as
+  verdict-first results.
+- **Hallucinated success.** Tian Pan, ["The Hallucinated Success Problem: When Your Agent Says Done and
+  Means Nothing"](https://tianpan.co/blog/2026-04-23-hallucinated-success-agent-false-completion), 2026.
+  Proposes checker agents and assertions on side effects before a "done" is accepted. Not measured.
 
 ## Background reading
 

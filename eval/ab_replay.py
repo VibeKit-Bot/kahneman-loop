@@ -57,7 +57,7 @@ def rough_tokens(obj):
 
 
 def arm_b(messages, b_results):
-    """The same context with the wysiati version of each changed tool result."""
+    """The same context with the Kahneman loop version of each changed tool result."""
     return [{**m, 'content': b_results[m['tool_call_id']]} if m.get('role') == 'tool' and m.get('tool_call_id') in b_results else m
             for m in messages]
 
