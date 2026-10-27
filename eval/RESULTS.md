@@ -88,5 +88,7 @@ often still claims the rest is done. So the trigger is the failed check alone.
 - What the agent says after a hand-back. Replaying the full continuation, tools included, is the
   next measurement.
 - Whether this holds on other harnesses and task mixes, coding agents in particular. The Claude Code
-  hook in this repo is a port and hasn't been measured there. If you run [the method](METHOD.md) on
+  hook in this repo is a port. Its only measurement is the free scan of one developer's past
+  sessions in the [README](../README.md#claude-code-replay-the-hook-over-your-past-sessions-for-free),
+  which counts would-be hand-backs but not what the agent said after one. If you run [the method](METHOD.md) on
   your agent, open an issue with your numbers, good or bad.

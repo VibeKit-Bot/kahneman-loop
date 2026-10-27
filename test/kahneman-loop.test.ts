@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CheckLedger, handBack, jobVerdict, replyReplaced, runTurnWithHandBack, verdict, withVerdict } from '../kahneman-loop.ts';
+import { CheckLedger, handBack, jobVerdict, recheckStatus, replyReplaced, runTurnWithHandBack, verdict, withVerdict } from '../kahneman-loop.ts';
 
 test('the verdict comes first in a tool result', () => {
   const out = withVerdict({ status: 'starting', jobId: 'j1' }, verdict.notDoneYet('live', 'starting', 'its status is "done"'));
@@ -105,8 +105,10 @@ test('runTurnWithHandBack: the continuation is the reply, and there is one conti
   const l = new CheckLedger();
   const sent: string[][] = [];
   const run = async (m: string[]) => { sent.push(m); if (sent.length === 1) l.record('npm test', false, '1 failing'); return `reply ${sent.length}`; };
-  const out = await runTurnWithHandBack({ messages: ['hi'], ledger: l, run, continueWith: (r, f) => [r, f] });
+  const shown: string[] = [];
+  const out = await runTurnWithHandBack({ messages: ['hi'], ledger: l, run, continueWith: (r, f) => [r, f], onRecheck: s => shown.push(`${s.kind} ${sent.length}`) });
   assert.deepEqual(out, { reply: 'reply 2', handedBack: true });
+  assert.deepEqual(shown, ['failed 1'], 'the user is told once, before the second round');
   assert.equal(sent.length, 2);
   assert.match(sent[1][2], /npm test \(1 failing\)/);
 
@@ -118,6 +120,16 @@ test('runTurnWithHandBack: the continuation is the reply, and there is one conti
 
   const clean = new CheckLedger();
   let calls = 0;
-  const out2 = await runTurnWithHandBack({ messages: ['hi'], ledger: clean, run: async () => `r${++calls}`, continueWith: (r, f) => [r, f] });
+  const out2 = await runTurnWithHandBack({ messages: ['hi'], ledger: clean, run: async () => `r${++calls}`, continueWith: (r, f) => [r, f], onRecheck: () => assert.fail('nothing to recheck') });
   assert.deepEqual(out2, { reply: 'r1', handedBack: false });
+});
+
+test('recheckStatus: what the user sees while a hand-back runs', () => {
+  const failed = recheckStatus({ failures: [{ key: 'npm test', ok: false, detail: '1 failing' }], stale: [{ key: 'tsc', ok: true }] });
+  assert.deepEqual(failed, { kind: 'failed', checks: ['npm test'], text: 'Rechecking: npm test failed this turn, so the agent is taking another look before it replies.' }, 'a failure comes before a stale pass, as in handBack');
+  const stale = recheckStatus({ failures: [], stale: [{ key: 'npm test', ok: true }, { key: 'tsc', ok: true }, { key: 'lint', ok: true }] });
+  assert.equal(stale?.kind, 'stale');
+  assert.deepEqual(stale?.checks, ['npm test', 'tsc'], 'at most two checks');
+  assert.match(stale!.text, /^Rechecking: the code changed after npm test and tsc passed/);
+  assert.equal(recheckStatus({ failures: [] }), null);
 });

@@ -212,6 +212,32 @@ export function handBack(input: {
   return null;
 }
 
+export interface RecheckStatus {
+  kind: 'failed' | 'stale';
+  /** The checks being looked at again, at most two. */
+  checks: string[];
+  /** A plain English line to show the user. */
+  text: string;
+}
+
+/**
+ * What to show the user while a hand-back runs. The agent seemed to be done
+ * and is working again; without a word, that reads as a stall or a second
+ * answer nobody asked for. Same order as handBack: a failure before a stale
+ * pass. `kind` and `checks` are there for a harness that writes its own copy
+ * or shows it in the user's language. Null when there is nothing to hand back.
+ */
+export function recheckStatus(input: { failures: CheckRun[]; stale?: CheckRun[] }): RecheckStatus | null {
+  const failed = input.failures.length > 0;
+  const runs = failed ? input.failures : input.stale ?? [];
+  if (!runs.length) return null;
+  const checks = runs.slice(0, 2).map(r => clip(r.key, 60));
+  const named = checks.join(' and ');
+  return failed
+    ? { kind: 'failed', checks, text: `Rechecking: ${named} failed this turn, so the agent is taking another look before it replies.` }
+    : { kind: 'stale', checks, text: `Rechecking: the code changed after ${named} passed, so the agent is checking again before it replies.` };
+}
+
 /**
  * The whole pattern for a harness that runs a turn as a function. `run` sends
  * messages to your model and returns its final text (running tools as it
@@ -225,15 +251,16 @@ export async function runTurnWithHandBack<M>(opts: {
   /** Build the two messages that carry the hand-back in your message format. */
   continueWith: (reply: string, fact: string) => M[];
   language?: string;
+  /** Show the user that the agent is rechecking (recheckStatus), before the second round starts. */
+  onRecheck?: (status: RecheckStatus) => void;
 }): Promise<{ reply: string; handedBack: boolean }> {
   const reply = await opts.run(opts.messages);
-  const fact = handBack({
-    failures: opts.ledger.standingFailures(),
-    stale: opts.ledger.staleChecks(),
-    alreadyHandedBack: false,
-    language: opts.language,
-  });
+  const failures = opts.ledger.standingFailures();
+  const stale = opts.ledger.staleChecks();
+  const fact = handBack({ failures, stale, alreadyHandedBack: false, language: opts.language });
   if (!fact) return { reply, handedBack: false };
+  const status = recheckStatus({ failures, stale });
+  if (status) opts.onRecheck?.(status);
   const answer = await opts.run([...opts.messages, ...opts.continueWith(reply, fact)]);
   return { reply: answer, handedBack: true };
 }

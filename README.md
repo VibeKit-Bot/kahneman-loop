@@ -172,12 +172,33 @@ Add to `.claude/settings.json` in your project (or `~/.claude/settings.json` for
 
 When Claude is about to stop and a check it ran this turn is still failing (tests, build, typecheck,
 lint, `cargo`, `go`, `pytest`, `curl -f`, and so on), the hook hands the failure back once. A later
-passing run of the same check clears it. Denied or blocked calls don't count as failures. It also
-hands back once when Claude edited code (`Edit`, `MultiEdit`, `Write` or `NotebookEdit`, on anything
-but `.md`, `.txt` and similar files) after its last check passed, and ran no check since. Edits made
-through the shell, such as `sed -i`, aren't seen. The hook only reads the transcript and never runs
-anything. To change what counts as a check, edit `CHECK_RE` at the top of
+passing run of the same check clears it, wherever it was run from. It also hands back once when Claude
+edited code (`Edit`, `MultiEdit`, `Write` or `NotebookEdit`, on anything but `.md`, `.txt` and similar
+files) in the repo a check passed in, after it passed, and ran no check since. Edits made through the
+shell, such as `sed -i`, aren't seen. The hook only reads the transcript and never runs anything. To
+change what counts as a check, edit `CHECK_RE` at the top of
 [claude-code/stop-hook.mjs](claude-code/stop-hook.mjs).
+
+Claude rarely runs a check on its own. It runs `npm test 2>&1 | tail -20; echo "exit $?"`, or a whole
+chain in the background, so the command's exit code usually belongs to `tail` or `echo`. The hook
+gives each check in a command its own outcome, read from:
+
+- the exit code, only when nothing after the check could have changed it;
+- a status the command echoed for that check (`echo "test exit $?"`, `&& echo OK || echo FAIL`);
+- the output, only when the check is the only thing in the command that printed, or when the tool
+  names itself (`error TS2322`, `** BUILD FAILED **`);
+- for a background command, its output file once Claude Code says it finished.
+
+If none of these says, the outcome is unknown and never hands back. These aren't failures either: a
+check that never ran (exit 127, or a script or project that doesn't exist), a run on code that was
+changed back or thrown away in the same command (a reverted edit, `git stash`, a `mktemp` copy, a
+worktree removed afterward), and denied or blocked calls.
+
+When it hands back, you see why Claude started working again:
+
+```
+Kahneman Loop: `npm test` failed this turn, so Claude is taking another look before it finishes.
+```
 
 ### Your own agent harness: copy one file
 
@@ -209,6 +230,7 @@ const { reply } = await runTurnWithHandBack({
     { role: 'user', content: fact },
   ],
   language: user.language,
+  onRecheck: status => showStatus(status.text), // "Rechecking: npm test failed this turn, ..."
 });
 ```
 
@@ -219,7 +241,9 @@ to name how your harness runs the check again, and `note` for anything that gets
 (a saved test login, say). The note goes in exactly as you write it; failure names are clipped and lose
 their brackets, since they come from what the check saw. If your harness hands back evidence of its
 own, such as a page it loaded, end that message with `replyReplaced()` so the answer is written the
-same way.
+same way. Show the user `recheckStatus({ failures, stale })` while the second round runs, or build your
+own line from its `kind` and `checks`: without it, an agent that seemed done and starts again reads as
+a stall.
 
 ## Results
 
@@ -262,8 +286,8 @@ against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md)
   No human labeled these replies.
 - **The replay isn't perfect.** The regenerated "today" arm matched the original reply's verdict on
   80% of turns.
-- **The Claude Code hook is a port** of the same mechanism to Claude Code. It wasn't measured on
-  Claude Code itself.
+- **The Claude Code hook is a port** of the same mechanism to Claude Code, and the replay above didn't
+  cover it. What it has instead is a free scan of past sessions (below), on one developer's work.
 - **The out-of-date pass isn't in these numbers.** It was added after the replay, so the 40% and the
   cost above are for the failed-check hand-back alone. How often it fires was estimated (2.5% of turns
   that edited code); how many wrong replies it prevents, and what its extra rounds cost, aren't
@@ -283,6 +307,39 @@ against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md)
 [eval/](eval/) contains the replay and judge method as a stdlib-only script that works with any
 OpenAI-compatible endpoint. It dry-runs by default and prints the number of calls before it spends
 anything. See [eval/METHOD.md](eval/METHOD.md).
+
+### Claude Code: replay the hook over your past sessions, for free
+
+```bash
+node eval/claude-code-scan.mjs            # every session in ~/.claude/projects
+```
+
+At every point where Claude ended a turn, the scan runs the hook on the transcript as it stood and
+records whether it would have handed back. No model calls, and nothing leaves your machine. It prints
+totals and writes each would-be hand-back, with the prompt, the check and Claude's reply, to
+`claude-code-fires.jsonl`. Read them: a catch is a reply that says done while its own check says
+otherwise.
+
+We ran it on 14 sessions of our own work on VibeKit (3,028 turns, 4,413 stops, 2,126 with a check in
+the turn), and read every hand-back by hand:
+
+| Would-be hand-back | Count |
+|---|---:|
+| **A reply that left out a failure its own check showed** | **13** |
+| Code edited after the last pass, rightly | 2 |
+| A real failure the reply already admitted, or a broken machine (signing, missing tools) | 7 |
+| Noise: code broken on purpose to test a theory, or a shell-script edit marking every check out of date | 5 |
+| **Total** | **27** |
+
+The first version of the hook, which read only exit codes, would have handed back 54 times on the
+same sessions and caught none of these.
+
+Eight of the 13 catches are one failing prebuild step that one session pushed past turn after turn;
+after a real first hand-back, the later ones might not have happened. They come from 4 sessions.
+
+The hook read an outcome for 33% of 5,333 check runs; the rest stayed unknown, which by design hands
+back nothing. The scan undercounts background checks: their output files sit in a temp directory and
+are often gone by the time you scan, though the live hook reads them while they exist.
 
 ## Tests
 
