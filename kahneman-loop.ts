@@ -13,9 +13,10 @@
  *      "NOT live yet". Cheap (about 86 prompt tokens per affected result).
  *
  *   2. Hand-back once. When the agent is about to end its turn and one of its
- *      own checks from this turn is still failing, the turn is not over: the
- *      failure goes back to the agent as one message, once, and the answer to
- *      that message is the reply the user reads. Never a loop.
+ *      own checks from this turn is still failing, or it changed the code
+ *      after its last check passed, the turn is not over: the fact goes back
+ *      to the agent as one message, once, and the answer to that message is
+ *      the reply the user reads. Never a loop.
  *
  * Zero dependencies. Copy this file into your harness. Node 22.6+ runs it as
  * is (type stripping); any TypeScript toolchain compiles it.
@@ -86,13 +87,20 @@ export interface CheckRun {
 /**
  * The checks the agent ran this turn: tests, a build, a screenshot that
  * clicked something, a curl of the live URL. Record each run from your tool
- * executor; start a new ledger per turn.
+ * executor, and each code change; start a new ledger per turn.
  */
 export class CheckLedger {
   private runs: CheckRun[] = [];
+  /** Each code change, with how many checks had run before it. */
+  private edits: { what: string; after: number }[] = [];
 
   record(key: string, ok: boolean, detail?: string): void {
     this.runs.push({ key, ok, detail });
+  }
+
+  /** The agent changed code (an edit, a patch, a write). Leave out docs and notes, which rarely affect a check. */
+  recordEdit(what: string): void {
+    this.edits.push({ what, after: this.runs.length });
   }
 
   /** Checks whose most recent run failed. */
@@ -103,6 +111,30 @@ export class CheckLedger {
       latest.set(run.key, run);
     }
     return [...latest.values()].filter(run => !run.ok);
+  }
+
+  /**
+   * Checks that passed before the code last changed, when nothing checked it
+   * since. The pass is still in the agent's context and still reads as
+   * evidence, but it checked code that no longer exists. Each comes back with
+   * what changed after it as its detail. Any check after the last change
+   * clears them all: the agent looked again.
+   */
+  staleChecks(): CheckRun[] {
+    const last = this.edits[this.edits.length - 1];
+    if (!last || last.after < this.runs.length) return [];
+    const latest = new Map<string, number>();
+    this.runs.forEach((run, i) => {
+      latest.delete(run.key);
+      latest.set(run.key, i);
+    });
+    return [...latest.entries()]
+      .filter(([, i]) => this.runs[i].ok)
+      .map(([key, i]) => {
+        const changed = [...new Set(this.edits.filter(e => e.after > i).map(e => e.what))];
+        const more = changed.length > 3 ? ` and ${changed.length - 3} more` : '';
+        return { key, ok: true, detail: `passed, then you changed ${changed.slice(0, 3).join(', ')}${more}` };
+      });
   }
 }
 
@@ -129,9 +161,9 @@ export function replyReplaced(language?: string): string {
 }
 
 /**
- * The one message that hands a failed check back. Null when there is nothing
- * to hand back, or when this turn already used its hand-back (one round,
- * never a loop).
+ * The one message that hands a failed check, or a pass the code has since
+ * moved past, back. Null when there is nothing to hand back, or when this
+ * turn already used its hand-back (one round, never a loop).
  *
  * Deliberately NOT gated on what the reply says. A regex for "it's done"
  * misses other languages and other phrasings, and on our traffic no text rule
@@ -141,6 +173,8 @@ export function replyReplaced(language?: string): string {
  */
 export function handBack(input: {
   failures: CheckRun[];
+  /** `ledger.staleChecks()`. Handed back only when nothing is failing. */
+  stale?: CheckRun[];
   alreadyHandedBack: boolean;
   /** The language the user writes in, if you know it. */
   language?: string;
@@ -154,24 +188,35 @@ export function handBack(input: {
    */
   note?: string;
 }): string | null {
-  if (input.alreadyHandedBack || input.failures.length === 0) return null;
-  const named = input.failures
-    .slice(0, 2)
-    .map(f => `${clip(f.key, 120)}${f.detail ? ` (${clip(f.detail, 160)})` : ''}`)
-    .join('; ');
+  if (input.alreadyHandedBack) return null;
+  const named = (runs: CheckRun[]): string =>
+    runs
+      .slice(0, 2)
+      .map(f => `${clip(f.key, 120)}${f.detail ? ` (${clip(f.detail, 160)})` : ''}`)
+      .join('; ');
   const note = input.note?.trim() ? ` ${input.note.trim()}` : '';
-  return (
-    `[System: your own check this turn came back failed: ${named}.${note} A failed check is not done, whatever the reply says. ` +
-    `Fix the cause and ${input.recheck || 'run the check again'}. If you cannot fix it, say plainly that it failed and why. ` +
-    `${replyReplaced(input.language)}]`
-  );
+  if (input.failures.length) {
+    return (
+      `[System: your own check this turn came back failed: ${named(input.failures)}.${note} A failed check is not done, whatever the reply says. ` +
+      `Fix the cause and ${input.recheck || 'run the check again'}. If you cannot fix it, say plainly that it failed and why. ` +
+      `${replyReplaced(input.language)}]`
+    );
+  }
+  if (input.stale?.length) {
+    return (
+      `[System: you changed the code after your own check passed: ${named(input.stale)}.${note} That pass checked the code before the change, so it does not show the change works. ` +
+      `Before you say it works, ${input.recheck || 'run the check again'}. If you cannot, say plainly that the change is not checked. ` +
+      `${replyReplaced(input.language)}]`
+    );
+  }
+  return null;
 }
 
 /**
  * The whole pattern for a harness that runs a turn as a function. `run` sends
  * messages to your model and returns its final text (running tools as it
- * goes, and recording checks into `ledger`). Returns the text the user should
- * read.
+ * goes, and recording checks and code changes into `ledger`). Returns the
+ * text the user should read.
  */
 export async function runTurnWithHandBack<M>(opts: {
   messages: M[];
@@ -182,7 +227,12 @@ export async function runTurnWithHandBack<M>(opts: {
   language?: string;
 }): Promise<{ reply: string; handedBack: boolean }> {
   const reply = await opts.run(opts.messages);
-  const fact = handBack({ failures: opts.ledger.standingFailures(), alreadyHandedBack: false, language: opts.language });
+  const fact = handBack({
+    failures: opts.ledger.standingFailures(),
+    stale: opts.ledger.staleChecks(),
+    alreadyHandedBack: false,
+    language: opts.language,
+  });
   if (!fact) return { reply, handedBack: false };
   const answer = await opts.run([...opts.messages, ...opts.continueWith(reply, fact)]);
   return { reply: answer, handedBack: true };

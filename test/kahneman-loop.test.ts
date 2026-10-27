@@ -37,6 +37,35 @@ test('a later passing run of the same check clears its failure', () => {
   assert.deepEqual(l.standingFailures().map(f => f.key), ['click "Sign up"', 'npm test']);
 });
 
+test('a pass from before the last code change is stale until any check runs again', () => {
+  const l = new CheckLedger();
+  l.recordEdit('src/a.ts');
+  l.record('npm test', true);
+  assert.deepEqual(l.staleChecks(), [], 'an edit before the check is what the check checked');
+  l.record('npx tsc', false, 'TS2304');
+  l.recordEdit('src/auth.ts');
+  l.recordEdit('src/auth.ts');
+  assert.deepEqual(l.staleChecks(), [{ key: 'npm test', ok: true, detail: 'passed, then you changed src/auth.ts' }],
+    'a failing check is a standing failure, not a stale pass');
+  l.record('npx tsc', true);
+  assert.deepEqual(l.staleChecks(), []);
+  for (const f of ['b.ts', 'c.ts', 'd.ts', 'e.ts']) l.recordEdit(f);
+  assert.deepEqual(l.staleChecks().map(s => s.detail), [
+    'passed, then you changed src/auth.ts, b.ts, c.ts and 2 more',
+    'passed, then you changed b.ts, c.ts, d.ts and 1 more',
+  ]);
+});
+
+test('hand-back: a stale pass goes back once, and a standing failure goes first', () => {
+  const stale = [{ key: 'npm test', ok: true, detail: 'passed, then you changed src/auth.ts' }];
+  const fact = handBack({ failures: [], stale, alreadyHandedBack: false, recheck: 'run npm test' })!;
+  assert.match(fact, /^\[System: you changed the code after your own check passed: npm test \(passed, then you changed src\/auth\.ts\)\. That pass checked the code before the change/);
+  assert.match(fact, /Before you say it works, run npm test\. If you cannot, say plainly that the change is not checked\./);
+  assert.ok(fact.endsWith(`${replyReplaced()}]`));
+  assert.equal(handBack({ failures: [], stale, alreadyHandedBack: true }), null);
+  assert.match(handBack({ failures: [{ key: 'npx tsc', ok: false }], stale, alreadyHandedBack: false })!, /came back failed: npx tsc\./);
+});
+
 test('hand-back: once, only on a standing failure, and it names the failure', () => {
   assert.equal(handBack({ failures: [], alreadyHandedBack: false }), null);
   const f = [{ key: 'click "Sign up"', ok: false, detail: 'did not change anything' }];
@@ -80,6 +109,12 @@ test('runTurnWithHandBack: the continuation is the reply, and there is one conti
   assert.deepEqual(out, { reply: 'reply 2', handedBack: true });
   assert.equal(sent.length, 2);
   assert.match(sent[1][2], /npm test \(1 failing\)/);
+
+  const edited = new CheckLedger();
+  const sent2: string[][] = [];
+  const run2 = async (m: string[]) => { sent2.push(m); if (sent2.length === 1) { edited.record('npm test', true); edited.recordEdit('src/auth.ts'); } return `reply ${sent2.length}`; };
+  assert.deepEqual(await runTurnWithHandBack({ messages: ['hi'], ledger: edited, run: run2, continueWith: (r, f) => [r, f] }), { reply: 'reply 2', handedBack: true });
+  assert.match(sent2[1][2], /npm test \(passed, then you changed src\/auth\.ts\)/);
 
   const clean = new CheckLedger();
   let calls = 0;

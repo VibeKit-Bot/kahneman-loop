@@ -13,6 +13,7 @@ const prompt = text => ({ type: 'user', message: { role: 'user', content: text }
 const call = command => { const id = `t${++n}`; return [id, { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } }]; };
 const result = (id, text, isError) => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: isError, content: text }] } });
 const say = text => ({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } });
+const edit = (file_path, name = 'Edit') => { const id = `t${++n}`; return [id, { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input: { file_path } }] } }]; };
 const lines = entries => entries.map(e => JSON.stringify(e));
 
 function runHook(entries, extra = {}) {
@@ -53,6 +54,45 @@ test('typecheck, cargo and curl -f are checks', () => {
     const [a, ca] = call(cmd);
     assert.equal(standingFailures(lines([prompt('go'), ca, result(a, 'Exit code 2\nerror', true)])).length, 1, cmd);
   }
+});
+
+test('a code edit after the last passing check blocks the stop, once', () => {
+  const [a, ca] = call('npm test');
+  const [e, ce] = edit('/repo/src/auth.ts');
+  const entries = [prompt('fix the login bug'), ca, result(a, '12 passing', false), ce, result(e, 'The file has been updated.', false), say('Fixed.')];
+  const out = JSON.parse(runHook(entries));
+  assert.equal(out.decision, 'block');
+  assert.match(out.reason, /you changed the code after your own check passed: `npm test` \(passed, then you changed auth\.ts\)/);
+  assert.equal(runHook(entries, { stop_hook_active: true }), '');
+});
+
+test('a check after the edit, a docs edit or a failed edit: no stale pass', () => {
+  const [a, ca] = call('npm test');
+  const [b, cb] = call('npx tsc --noEmit');
+  const [e, ce] = edit('/repo/src/auth.ts');
+  const [d, cd] = edit('/repo/README.md', 'Write');
+  const [f, cf] = edit('/repo/src/auth.ts');
+  assert.equal(runHook([prompt('go'), ca, result(a, '12 passing', false), ce, result(e, 'ok', false), cb, result(b, '', false), say('Done.')]), '');
+  assert.equal(runHook([prompt('go'), ca, result(a, '12 passing', false), cd, result(d, 'ok', false), say('Done.')]), '');
+  assert.equal(runHook([prompt('go'), ca, result(a, '12 passing', false), cf, result(f, 'String to replace not found in file.', true), say('Done.')]), '');
+});
+
+test('a notebook edit counts; a subagent edit does not', () => {
+  const [a, ca] = call('pytest');
+  const [e, ce] = edit('/repo/analysis.ipynb', 'NotebookEdit');
+  ce.message.content[0].input = { notebook_path: '/repo/analysis.ipynb' };
+  const [s, cs] = edit('/repo/src/auth.ts');
+  const side = [{ ...cs, isSidechain: true }, { ...result(s, 'ok', false), isSidechain: true }];
+  assert.match(JSON.parse(runHook([prompt('go'), ca, result(a, '3 passed', false), ce, result(e, 'ok', false), say('Done.')])).reason, /`pytest` \(passed, then you changed analysis\.ipynb\)/);
+  assert.equal(runHook([prompt('go'), ca, result(a, '3 passed', false), ...side, say('Done.')]), '');
+});
+
+test('a standing failure is handed back before a stale pass', () => {
+  const [a, ca] = call('npm test');
+  const [b, cb] = call('npx tsc --noEmit');
+  const [e, ce] = edit('/repo/src/auth.ts');
+  const out = JSON.parse(runHook([prompt('go'), ca, result(a, '12 passing', false), cb, result(b, 'Exit code 2\nerror TS2304', true), ce, result(e, 'ok', false), say('Done.')]));
+  assert.match(out.reason, /still failing: `npx tsc`/);
 });
 
 test('no transcript, bad input or a clean turn: the hook stays silent', () => {

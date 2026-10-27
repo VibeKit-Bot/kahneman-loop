@@ -74,12 +74,15 @@ information at the start and end of a long context much better than information 
 
 Now look at the moment an agent writes the reply that ends a turn. Two things are reliably in view: its
 own plan ("fix the login bug, deploy it, done"), which it has restated many times, and the last tool
-result. Two things reliably aren't:
+result. Three things reliably aren't:
 
 - **What a tool result didn't establish.** `{"jobId":"d_81","status":"starting"}` doesn't say the
   deploy finished. The agent reads "deploy" and writes "it's live".
 - **A check that failed twenty steps ago.** The test run that came back red is in the middle of a long
   context. The plan is right here. The agent writes "fixed, all tests pass".
+- **That a pass has gone out of date.** The tests passed, then the agent changed one more file. The
+  green run is still in context and easy to recall, so it still reads as evidence. Nothing in view says
+  it checked code that no longer exists.
 
 So it tells the most coherent story it can see, and that story is "done". The agent isn't lying. It's
 WYSIATI.
@@ -134,10 +137,17 @@ agent  (runs the test, fixes the cause, runs it again)
        "Fixed: the password check compared hashes in the wrong order. Tests pass now (12 passing)."
 ```
 
-The surprise is the failed check, not the wording of the reply, so it works in every language. (No text
-rule we tried could tell bad replies from fine ones; see [eval/RESULTS.md](eval/RESULTS.md).) It fires
-once per turn, never in a loop: System 2 is called in, not left running. On turns where no check
-failed, there's no extra round at all.
+A pass goes out of date the same way. If the agent changed code after its last check passed and ran no
+check since, that pass checked code that no longer exists, and it hands back the same way: run the
+check again, or say plainly that the change isn't checked. Any check after the change clears it. A
+regex read of 14 days of VibeKit's hosted-agent transcripts found 2.5% of turns that edited code (17
+of 671) ending like this. That's how often it would fire there, not a count of wrong replies, and it
+wasn't measured on Claude Code.
+
+The surprise is the failed or out-of-date check, not the wording of the reply, so it works in every
+language. (No text rule we tried could tell bad replies from fine ones; see
+[eval/RESULTS.md](eval/RESULTS.md).) It fires once per turn, never in a loop: System 2 is called in,
+not left running. On turns where no check failed or went out of date, there's no extra round at all.
 
 The [Ralph loop](https://ghuntley.com/ralph/) keeps an agent going round on the same task. The Kahneman
 Loop is a single extra round, and only when the agent's own check says the story is wrong.
@@ -162,9 +172,12 @@ Add to `.claude/settings.json` in your project (or `~/.claude/settings.json` for
 
 When Claude is about to stop and a check it ran this turn is still failing (tests, build, typecheck,
 lint, `cargo`, `go`, `pytest`, `curl -f`, and so on), the hook hands the failure back once. A later
-passing run of the same check clears it. Denied or blocked calls don't count as failures. The hook
-only reads the transcript and never runs anything. To change what counts as a check, edit `CHECK_RE`
-at the top of [claude-code/stop-hook.mjs](claude-code/stop-hook.mjs).
+passing run of the same check clears it. Denied or blocked calls don't count as failures. It also
+hands back once when Claude edited code (`Edit`, `MultiEdit`, `Write` or `NotebookEdit`, on anything
+but `.md`, `.txt` and similar files) after its last check passed, and ran no check since. Edits made
+through the shell, such as `sed -i`, aren't seen. The hook only reads the transcript and never runs
+anything. To change what counts as a check, edit `CHECK_RE` at the top of
+[claude-code/stop-hook.mjs](claude-code/stop-hook.mjs).
 
 ### Your own agent harness: copy one file
 
@@ -182,8 +195,9 @@ return withVerdict(job, v.verdict, v.verified);
 // A check that couldn't look:
 if (!shot.ok) return withVerdict(shot, verdict.notChecked('the page did not render'));
 
-// 2. Also in the executor: record every check the agent runs (one ledger per turn).
+// 2. Also in the executor: record every check the agent runs, and every code change (one ledger per turn).
 ledger.record(`click ${selector}`, changed, changed ? undefined : 'the click did not change anything');
+ledger.recordEdit(file.path); // not for docs or notes
 
 // 3. Around the turn: hand a standing failure back once.
 const { reply } = await runTurnWithHandBack({
@@ -199,7 +213,8 @@ const { reply } = await runTurnWithHandBack({
 ```
 
 If your loop doesn't fit `runTurnWithHandBack`, call `handBack({ failures: ledger.standingFailures(),
-alreadyHandedBack })` where your turn ends. It returns the message to send, or `null`. Pass `recheck`
+stale: ledger.staleChecks(), alreadyHandedBack })` where your turn ends. It returns the message to
+send, or `null`. A standing failure goes back before an out-of-date pass. Pass `recheck`
 to name how your harness runs the check again, and `note` for anything that gets past the failure
 (a saved test login, say). The note goes in exactly as you write it; failure names are clipped and lose
 their brackets, since they come from what the check saw. If your harness hands back evidence of its
@@ -223,7 +238,7 @@ against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md)
 | Verdict text only | 23% | 18% | 5 (-2 to 13) |
 
 - **Tokens: about 1% more.** A verdict adds about 86 tokens to a tool result that didn't establish
-  its outcome. The hand-back adds one more model round on about 1 in 140 replies. Averaged over every
+  its outcome. The failed-check hand-back adds one more model round on about 1 in 140 replies. Averaged over every
   reply, that's under 1% more tokens.
 - **Time: about 1% more.** Verdicts add no calls and no waiting. The hand-back round is the agent going
   back to fix what failed; spread over every reply, it's about 0.3 seconds, under 1%. VibeKit already
@@ -249,6 +264,10 @@ against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md)
   80% of turns.
 - **The Claude Code hook is a port** of the same mechanism to Claude Code. It wasn't measured on
   Claude Code itself.
+- **The out-of-date pass isn't in these numbers.** It was added after the replay, so the 40% and the
+  cost above are for the failed-check hand-back alone. How often it fires was estimated (2.5% of turns
+  that edited code); how many wrong replies it prevents, and what its extra rounds cost, aren't
+  measured yet.
 - **It can only be surprised by a check that ran.** A claim that nothing checked ("I tested it" when no
   test ran) has no failure to hand back. The loop has its own WYSIATI: it sees what the harness recorded.
 - **System 1 and System 2 are an analogy.** They describe people, and Kahneman himself called them
