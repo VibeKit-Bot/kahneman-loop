@@ -146,7 +146,12 @@ export function handBack(input: {
   language?: string;
   /** How to run the check again in your harness, e.g. "render the page again and click the control you changed". */
   recheck?: string;
-  /** Anything your harness knows that gets the check through, said right after the failures (a saved test login, why it stopped). */
+  /**
+   * Anything your harness knows that gets the check through, said right after
+   * the failures (a saved test login, why it stopped). It is your own text and
+   * goes in exactly as given: a saved login named `staff[west]` must reach the
+   * agent as that name, or the agent asks for a login that does not exist.
+   */
   note?: string;
 }): string | null {
   if (input.alreadyHandedBack || input.failures.length === 0) return null;
@@ -154,7 +159,7 @@ export function handBack(input: {
     .slice(0, 2)
     .map(f => `${clip(f.key, 120)}${f.detail ? ` (${clip(f.detail, 160)})` : ''}`)
     .join('; ');
-  const note = input.note ? ` ${input.note.replace(/[[\]]/g, '').trim()}` : '';
+  const note = input.note?.trim() ? ` ${input.note.trim()}` : '';
   return (
     `[System: your own check this turn came back failed: ${named}.${note} A failed check is not done, whatever the reply says. ` +
     `Fix the cause and ${input.recheck || 'run the check again'}. If you cannot fix it, say plainly that it failed and why. ` +

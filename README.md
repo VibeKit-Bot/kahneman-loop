@@ -156,8 +156,10 @@ const { reply } = await runTurnWithHandBack({
 If your loop doesn't fit `runTurnWithHandBack`, call `handBack({ failures: ledger.standingFailures(),
 alreadyHandedBack })` where your turn ends. It returns the message to send, or `null`. Pass `recheck`
 to name how your harness runs the check again, and `note` for anything that gets past the failure
-(a saved test login, say). If your harness hands back evidence of its own, such as a page it loaded,
-end that message with `replyReplaced()` so the answer is written the same way.
+(a saved test login, say). The note goes in exactly as you write it; failure names are clipped and lose
+their brackets, since they come from what the check saw. If your harness hands back evidence of its
+own, such as a page it loaded, end that message with `replyReplaced()` so the answer is written the
+same way.
 
 ## Results
 
