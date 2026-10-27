@@ -1,5 +1,5 @@
 /**
- * The Kahneman loop, after Kahneman's WYSIATI ("What You See Is All There
+ * The Kahneman Loop, after Kahneman's WYSIATI ("What You See Is All There
  * Is"). An agent judges only from what is in its context. When a tool result
  * says "deploy started", the agent tells the user "it's live", because
  * nothing in front of it says otherwise. When its own check fails, it still

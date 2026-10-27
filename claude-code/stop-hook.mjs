@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The Kahneman loop's hand-back for Claude Code: a Stop hook.
+// The Kahneman Loop's hand-back for Claude Code: a Stop hook.
 //
 // When Claude is about to end its turn and a check it ran this turn (tests,
 // build, typecheck, lint, `curl -f`) is still failing, the turn is not over:
@@ -67,7 +67,7 @@ export function standingFailures(lines) {
 
 export function handBackReason(failures) {
   const named = failures.slice(0, 2).map(f => `\`${clip(f.key, 60)}\` (${clip(f.detail, 160)})`).join('; ');
-  return `[Kahneman loop: your own check this turn is still failing: ${named}. A failed check is not done, whatever your last message said. `
+  return `[Kahneman Loop: your own check this turn is still failing: ${named}. A failed check is not done, whatever your last message said. `
     + 'Fix the cause and run it again. If you cannot fix it, tell the user plainly that it failed and why.]';
 }
 

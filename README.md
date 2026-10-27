@@ -1,12 +1,12 @@
-# The Kahneman loop
+# The Kahneman Loop
 
-<img alt="The Kahneman loop: 40% fewer false claims (replies needing a correction fell from 25% to 15% on real production turns where a check failed or a job wasn't done yet), for about 1% more tokens and about 1% more time." src="assets/hero.png">
+<img alt="The Kahneman Loop: 40% fewer false claims (replies needing a correction fell from 25% to 15% on real production turns where a check failed or a job wasn't done yet), for about 1% more tokens and about 1% more time." src="assets/hero.png">
 
 **AI agents say "done" when it isn't.** The deploy hadn't finished, or the test the agent just ran had failed, and
-it tells the user it's fixed anyway. The Kahneman loop puts what really happened in front of the agent before
+it tells the user it's fixed anyway. The Kahneman Loop puts what really happened in front of the agent before
 it replies, and hands its own failed check back once before it can say "done".
 
-> **With the Kahneman loop, our agents made 40% fewer false claims, for about 1% more tokens and 1% more time.**
+> **With the Kahneman Loop, our agents made 40% fewer false claims, for about 1% more tokens and 1% more time.**
 
 That's measured on real production traffic. On turns where a check had failed or a job wasn't done yet,
 replies that needed a correction fell from **25% to 15%**. The cost is averaged over every reply: the
@@ -60,7 +60,7 @@ Every turn we measured already ran with this line in the agent's instructions:
 > **NEVER say "fixed"/"works"/"verified"/"I tested it" unless a tool call you just made returned a real success.**
 
 A quarter of the affected replies still needed a correction. A rule is one more thing far up the
-context that the agent has to remember. The Kahneman loop doesn't ask the agent to remember better. It makes the
+context that the agent has to remember. The Kahneman Loop doesn't ask the agent to remember better. It makes the
 missing fact available at the moment the agent decides what to say.
 
 ## The fix: put the missing fact in front of the agent
@@ -158,11 +158,11 @@ alreadyHandedBack })` where your turn ends. It returns the message to send, or `
 
 These numbers come from production traffic on [VibeKit](https://vibekit.bot), a hosted agent that
 builds and runs apps, over three weeks in October 2026. Each affected turn was replayed with its
-real context on the same model. Arm A got today's tool results, and arm B got the Kahneman loop's
+real context on the same model. Arm A got today's tool results, and arm B got the Kahneman Loop's
 results plus the hand-back. Each arm got two samples. A blind judge scored every reply on its own, shuffled,
 against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md).
 
-| | Replies needing correction: today | With the Kahneman loop | Drop, points (95% CI) |
+| | Replies needing correction: today | With the Kahneman Loop | Drop, points (95% CI) |
 |---|---:|---:|---:|
 | **All affected turns** | 25% | **15%** | **10 (4 to 18)** |
 | Turns where the original reply was wrong | 57% | 29% | 28 (12 to 43) |
@@ -176,7 +176,7 @@ against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md)
 - **Time: about 1% more.** Verdicts add no calls and no waiting. The hand-back round is the agent going
   back to fix what failed; spread over every reply, it's about 0.3 seconds, under 1%. VibeKit already
   runs the same hand-back in production, so these are the real tokens and seconds of those rounds
-  over the same three weeks, scaled to how often the Kahneman loop's hand-back fires.
+  over the same three weeks, scaled to how often the Kahneman Loop's hand-back fires.
 - **No harm on good turns:** where the original reply was already right, the loop didn't add mistakes
   (8% needed correction today, 7% with the loop).
 - **Reach:** about 6% of all turns were affected. Across all turns, that's about 1 in 200 replies
@@ -212,7 +212,7 @@ node --test test/*.test.*
 
 ## Related work
 
-Others have named and measured the same failure. What the Kahneman loop adds is the trigger (the agent's
+Others have named and measured the same failure. What the Kahneman Loop adds is the trigger (the agent's
 own failed check, not the wording of its reply) and a measured cost on production traffic.
 
 - **Illusory completion.** "When Is Enough Not Enough? Illusory Completion in Search Agents",
