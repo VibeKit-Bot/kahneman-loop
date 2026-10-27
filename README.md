@@ -1,6 +1,6 @@
-# The Kahneman Loop
+# The Kahneman Loop (System 1.5)
 
-<img alt="The Kahneman Loop: 40% fewer false claims (replies needing a correction fell from 25% to 15% on real production turns where a check failed or a job wasn't done yet), for about 1% more tokens and about 1% more time." src="assets/hero.png">
+<img alt="The Kahneman Loop (System 1.5): 40% fewer false claims (replies needing a correction fell from 25% to 15% on real production turns where a check failed or a job wasn't done yet), for about 1% more tokens and about 1% more time." src="assets/hero.png">
 
 **AI agents say "done" when it isn't.** The deploy hadn't finished, or the test the agent just ran had failed, and
 it tells the user it's fixed anyway. The Kahneman Loop puts what really happened in front of the agent before
@@ -18,11 +18,15 @@ A *false claim* here is a claim that a tool result contradicts ("all tests pass"
 or that no tool result backs ("I tested it" when nothing was tested). The failure has a few names
 already: outcome hallucination, hallucinated success, illusory completion (see [Related work](#related-work)).
 
-The [Ralph loop](https://ghuntley.com/ralph/) keeps an agent going round on the same task. The Kahneman
-loop stops it from saying the task is done before it is. It's named after Daniel Kahneman, whose idea
-of WYSIATI ("What You See Is All There Is", below) is the reason it works.
+**Why "System 1.5".** Daniel Kahneman described the mind as two systems: a fast one that jumps to a
+conclusion from whatever is in front of it, and a slow one that can check that conclusion but rarely
+bothers unless something surprises it. An agent has both. What it lacks is the surprise when its own
+evidence says it's wrong. The Kahneman Loop is that missing piece. It does no thinking of its own: it
+shows the fast system the fact it was missing, and when the agent's own check failed, it calls the slow
+system in, once. [Background](#background-how-people-jump-to-conclusions) has the psychology, and
+[How it works](#how-it-works-system-15) has the code.
 
-## Why agents do this
+## Background: how people jump to conclusions
 
 ### The availability heuristic
 
@@ -31,19 +35,46 @@ by how easily examples come to mind. Ask whether English has more words that *st
 words with K as the *third* letter, and most people say "start with K", because those words are easier
 to recall. There are actually more of the second kind.
 
-Kahneman later named the habit underneath it **WYSIATI: What You See Is All There Is**. The mind builds
-the most coherent story it can from the information in front of it and doesn't ask what's missing.
-Confidence comes from how well the story hangs together, not from how complete the evidence is.
+### System 1 and System 2
 
-### Agents do the same thing
+Kahneman later folded that finding, and decades of others, into one picture of the mind
+(*Thinking, Fast and Slow*, 2011). It has two characters.
 
-An LLM agent's "mind" is its context window, and what's available is what stands out in it: what's
-recent, what's repeated, and what's near the end. This has been measured: language models use
+- **System 1** is fast and automatic. It reads a face, finishes "bread and ...", and turns whatever is
+  in front of it into a story that makes sense, with no effort and no feeling of having done anything.
+  The availability heuristic is System 1 at work.
+- **System 2** is slow and deliberate. It does long division, checks an argument and follows a rule it
+  was given. It can catch System 1's mistakes, but it's expensive, and Kahneman calls it lazy: most of
+  the time it endorses whatever System 1 hands it.
+
+Try this: *a bat and a ball cost $1.10 together. The bat costs $1.00 more than the ball. How much does
+the ball cost?* The answer that comes to mind is 10 cents. It's wrong (the ball costs 5 cents), and
+Kahneman reports that more than half of the students asked at Harvard, MIT and Princeton gave it anyway.
+System 2 could have checked it in a few seconds. It didn't, because nothing felt wrong.
+
+That's the part that matters here: **System 2 doesn't decide for itself when to look.** System 1 calls
+it in when it runs into trouble, such as a question it has no answer for, or a surprise that breaks the
+story it was telling.
+
+### WYSIATI: What You See Is All There Is
+
+System 1 builds the most coherent story it can from the information in front of it and doesn't ask
+what's missing. Kahneman's name for this is **WYSIATI: What You See Is All There Is**. Confidence comes
+from how well the story hangs together, not from how complete the evidence is.
+
+That's what makes a missing fact so dangerous: it can't surprise anyone. A fact that contradicts the
+story wakes System 2 up. A fact that isn't in view does nothing at all.
+
+## Why agents say "done"
+
+An LLM writing a reply works like System 1: it writes the most coherent continuation of what's in its
+context. Its "mind" is the context window, and what's available is what stands out in it: what's
+recent, what's repeated and what's near the end. This has been measured: language models use
 information at the start and end of a long context much better than information in the middle.
 
-Now look at the moment an agent writes the reply that ends a turn. Two things are reliably available:
-its own plan ("fix the login bug, deploy it, done"), which it has restated many times, and the last
-tool result. Two things reliably aren't:
+Now look at the moment an agent writes the reply that ends a turn. Two things are reliably in view: its
+own plan ("fix the login bug, deploy it, done"), which it has restated many times, and the last tool
+result. Two things reliably aren't:
 
 - **What a tool result didn't establish.** `{"jobId":"d_81","status":"starting"}` doesn't say the
   deploy finished. The agent reads "deploy" and writes "it's live".
@@ -51,22 +82,31 @@ tool result. Two things reliably aren't:
   context. The plan is right here. The agent writes "fixed, all tests pass".
 
 So it tells the most coherent story it can see, and that story is "done". The agent isn't lying. It's
-judging from what's available, the way people do.
+WYSIATI.
 
-### Why a rule doesn't fix it
+The agent does have a System 2. It can run the test again, read the logs or open the page, and a
+reasoning model can think at length before it answers. What it doesn't have is the surprise that would
+send it looking, because nothing in view contradicts "done".
+
+### Why a rule doesn't fix it, and neither does more thinking
 
 Every turn we measured already ran with this line in the agent's instructions:
 
 > **NEVER say "fixed"/"works"/"verified"/"I tested it" unless a tool call you just made returned a real success.**
 
-A quarter of the affected replies still needed a correction. A rule is one more thing far up the
-context that the agent has to remember. The Kahneman Loop doesn't ask the agent to remember better. It makes the
-missing fact available at the moment the agent decides what to say.
+A quarter of the affected replies still needed a correction. A rule is a note to System 2 far up the
+context, and System 2 only reads it when something sends it looking. Turning up reasoning on every reply
+pays System 2's price on every reply, including the many where nothing went wrong, and the reasoning
+starts from the same context, where the failed check is still twenty steps back.
 
-## The fix: put the missing fact in front of the agent
+## How it works: System 1.5
 
-**1. Verdict-first tool results.** A tool result that doesn't establish the outcome says so in its
-first field, in plain words:
+The Kahneman Loop sits between the two systems. It's code in your harness, not another model, and it
+does no thinking of its own. It does the two things System 1 can't do for itself: show the missing
+fact, and raise the surprise when the agent's own evidence says the story is wrong.
+
+**1. Show the missing fact: verdict-first tool results.** WYSIATI can't be argued with, so change what's
+seen. A tool result that doesn't establish the outcome says so in its first field, in plain words:
 
 ```diff
 - {"jobId":"d_81","status":"starting"}
@@ -76,11 +116,12 @@ first field, in plain words:
 The same goes for a check that couldn't run (`NOT checked: the page did not render`) and a call
 that was refused (`NOT checked: the call was refused before anything ran: ...`).
 
-**2. Hand-back once.** When the agent is about to end its turn and one of its own checks from this turn
-is still failing (no later run of the same check passed), the turn isn't over. The failure goes back
-to the agent as one message, and the answer to that message is the reply the user reads. So the
-message asks for the whole reply, not just the fix; an agent told only to say what it changed says
-only that, and the user never hears what else the turn did:
+**2. Raise the surprise: hand back once.** When the agent is about to end its turn and one of its own
+checks from this turn is still failing (no later run of the same check passed), the turn isn't over. The
+failure goes back to the agent as one message, and that is what calls System 2 in: the agent runs the
+check again, fixes the cause, or says plainly that it failed. The answer to that message is the reply
+the user reads, so the message asks for the whole reply, not just the fix. An agent told only to say
+what it changed says only that, and the user never hears what else the turn did:
 
 ```
 tool   npm test                 -> Exit code 1 ... 1 failing
@@ -93,9 +134,13 @@ agent  (runs the test, fixes the cause, runs it again)
        "Fixed: the password check compared hashes in the wrong order. Tests pass now (12 passing)."
 ```
 
-It happens once per turn, never in a loop. It's triggered by the failed check, not by the wording of
-the reply, so it works in every language. (No text rule we tried could tell bad replies from fine
-ones; see [eval/RESULTS.md](eval/RESULTS.md).)
+The surprise is the failed check, not the wording of the reply, so it works in every language. (No text
+rule we tried could tell bad replies from fine ones; see [eval/RESULTS.md](eval/RESULTS.md).) It fires
+once per turn, never in a loop: System 2 is called in, not left running. On turns where no check
+failed, there's no extra round at all.
+
+The [Ralph loop](https://ghuntley.com/ralph/) keeps an agent going round on the same task. The Kahneman
+Loop is a single extra round, and only when the agent's own check says the story is wrong.
 
 ## Use it
 
@@ -204,6 +249,11 @@ against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md)
   80% of turns.
 - **The Claude Code hook is a port** of the same mechanism to Claude Code. It wasn't measured on
   Claude Code itself.
+- **It can only be surprised by a check that ran.** A claim that nothing checked ("I tested it" when no
+  test ran) has no failure to hand back. The loop has its own WYSIATI: it sees what the harness recorded.
+- **System 1 and System 2 are an analogy.** They describe people, and Kahneman himself called them
+  fictitious characters. Nothing here claims a model has them. The loop was measured, not derived from
+  the analogy.
 
 ## Measure it on your own agent
 
@@ -235,12 +285,16 @@ own failed check, not the wording of its reply) and a measured cost on productio
   Means Nothing"](https://tianpan.co/blog/2026-04-23-hallucinated-success-agent-false-completion), 2026.
   Proposes checker agents and assertions on side effects before a "done" is accepted. Not measured.
 
-## Background reading
+
+## Further reading
 
 - Amos Tversky and Daniel Kahneman, "Availability: A heuristic for judging frequency and probability",
   *Cognitive Psychology* 5(2), 1973.
-- Daniel Kahneman, *Thinking, Fast and Slow*, 2011. WYSIATI is introduced in chapter 7, "A Machine
-  for Jumping to Conclusions".
+- Daniel Kahneman, *Thinking, Fast and Slow*, 2011. System 1 and System 2 are introduced in chapter 1,
+  "The Characters of the Story"; the bat and the ball and the lazy System 2 are in chapter 3, "The Lazy
+  Controller"; WYSIATI is in chapter 7, "A Machine for Jumping to Conclusions".
+- Shane Frederick, "Cognitive Reflection and Decision Making", *Journal of Economic Perspectives* 19(4),
+  2005. The source of the bat-and-ball question.
 - Nelson F. Liu et al., "Lost in the Middle: How Language Models Use Long Contexts",
   [arXiv:2307.03172](https://arxiv.org/abs/2307.03172), 2023.
 
