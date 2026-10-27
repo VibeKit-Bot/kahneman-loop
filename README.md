@@ -268,6 +268,10 @@ against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md)
   cost above are for the failed-check hand-back alone. How often it fires was estimated (2.5% of turns
   that edited code); how many wrong replies it prevents, and what its extra rounds cost, aren't
   measured yet.
+- **The hand-back's wording changed after the replay.** The replay used the message as it stood on
+  2026-10-26, which ended by asking the agent to say what it changed and what is true now. It now asks
+  for the whole reply instead (above). When a hand-back fires is unchanged, but whether the agent still
+  goes back to work every time after one hasn't been replayed with the new wording.
 - **It can only be surprised by a check that ran.** A claim that nothing checked ("I tested it" when no
   test ran) has no failure to hand back. The loop has its own WYSIATI: it sees what the harness recorded.
 - **System 1 and System 2 are an analogy.** They describe people, and Kahneman himself called them
