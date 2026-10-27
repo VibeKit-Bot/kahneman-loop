@@ -78,7 +78,9 @@ that was refused (`NOT checked: the call was refused before anything ran: ...`).
 
 **2. Hand-back once.** When the agent is about to end its turn and one of its own checks from this turn
 is still failing (no later run of the same check passed), the turn isn't over. The failure goes back
-to the agent as one message, and the answer to that message is the reply the user reads:
+to the agent as one message, and the answer to that message is the reply the user reads. So the
+message asks for the whole reply, not just the fix; an agent told only to say what it changed says
+only that, and the user never hears what else the turn did:
 
 ```
 tool   npm test                 -> Exit code 1 ... 1 failing
@@ -152,7 +154,10 @@ const { reply } = await runTurnWithHandBack({
 ```
 
 If your loop doesn't fit `runTurnWithHandBack`, call `handBack({ failures: ledger.standingFailures(),
-alreadyHandedBack })` where your turn ends. It returns the message to send, or `null`.
+alreadyHandedBack })` where your turn ends. It returns the message to send, or `null`. Pass `recheck`
+to name how your harness runs the check again, and `note` for anything that gets past the failure
+(a saved test login, say). If your harness hands back evidence of its own, such as a page it loaded,
+end that message with `replyReplaced()` so the answer is written the same way.
 
 ## Results
 

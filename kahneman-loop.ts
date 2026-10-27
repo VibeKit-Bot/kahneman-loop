@@ -106,7 +106,27 @@ export class CheckLedger {
   }
 }
 
-const clip = (s: string, n: number): string => s.replace(/\s+/g, ' ').trim().slice(0, n);
+// Brackets are stripped because the hand-back is itself one bracketed message.
+const clip = (s: string, n: number): string => s.replace(/\s+/g, ' ').replace(/[[\]]/g, '').trim().slice(0, n);
+
+/**
+ * How the answer to any hand-back is written. The answer replaces the reply
+ * it corrects, so it is the only reply the user reads, and it has to be the
+ * whole reply. Told only to say what it changed, the agent says only that: the
+ * first hand-back of a first build on our traffic (2026-10-27) answered with
+ * one line about the button it fixed, and the person never got the list of
+ * what was built. The agent's earlier failure was answering the hand-back
+ * instead of the user ("you're right, the previous check failed"), hence the
+ * last sentence. Use it in hand-backs of your own too (a page your harness
+ * loaded, a build it ran), so every answer is written the same way.
+ */
+export function replyReplaced(language?: string): string {
+  return (
+    `Your reply above is replaced by the one you write now, so it is the only reply the user reads: write it to them ${language ? `in ${clip(language, 40)}` : 'in their language'} as the whole reply, ` +
+    'with everything from this turn they need, what you changed and what is true now. Repeat nothing this check disproved unless it now passes. ' +
+    'They never saw this check, so do not mention it.'
+  );
+}
 
 /**
  * The one message that hands a failed check back. Null when there is nothing
@@ -124,17 +144,21 @@ export function handBack(input: {
   alreadyHandedBack: boolean;
   /** The language the user writes in, if you know it. */
   language?: string;
+  /** How to run the check again in your harness, e.g. "render the page again and click the control you changed". */
+  recheck?: string;
+  /** Anything your harness knows that gets the check through, said right after the failures (a saved test login, why it stopped). */
+  note?: string;
 }): string | null {
   if (input.alreadyHandedBack || input.failures.length === 0) return null;
   const named = input.failures
     .slice(0, 2)
-    .map(f => `${clip(f.key, 80)}${f.detail ? ` (${clip(f.detail, 160)})` : ''}`)
+    .map(f => `${clip(f.key, 120)}${f.detail ? ` (${clip(f.detail, 160)})` : ''}`)
     .join('; ');
-  const lang = input.language ? ` Reply in ${input.language}.` : '';
+  const note = input.note ? ` ${input.note.replace(/[[\]]/g, '').trim()}` : '';
   return (
-    `[System: your own check this turn came back failed: ${named}. A failed check is not done, whatever the reply says. ` +
-    'Fix the cause and run the check again. If you cannot fix it, say plainly that it failed and why. ' +
-    `Your reply above is replaced by the one you write now: write it to the user, saying what you changed and what is true now.${lang}]`
+    `[System: your own check this turn came back failed: ${named}.${note} A failed check is not done, whatever the reply says. ` +
+    `Fix the cause and ${input.recheck || 'run the check again'}. If you cannot fix it, say plainly that it failed and why. ` +
+    `${replyReplaced(input.language)}]`
   );
 }
 
