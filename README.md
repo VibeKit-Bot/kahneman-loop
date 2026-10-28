@@ -175,7 +175,10 @@ lint, `cargo`, `go`, `pytest`, `curl -f`, and so on), the hook hands the failure
 passing run of the same check clears it, wherever it was run from. It also hands back once when Claude
 edited code (`Edit`, `MultiEdit`, `Write` or `NotebookEdit`, on anything but `.md`, `.txt` and similar
 files) in the repo a check passed in, after it passed, and ran no check since. Edits made through the
-shell, such as `sed -i`, aren't seen. The hook only reads the transcript and never runs anything. To
+shell count too: `sed -i`, `perl -i`, a redirect such as `cat > src/a.ts`, and a copy onto a file. A
+change the same command undoes (a backup copied back after a trial run) does not. Edits a script
+makes on its own, such as `python3 fix.py`, aren't seen. The hook only reads the transcript and never
+runs anything. To
 change what counts as a check, edit `CHECK_RE` at the top of
 [claude-code/stop-hook.mjs](claude-code/stop-hook.mjs).
 

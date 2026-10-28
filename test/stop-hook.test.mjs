@@ -207,6 +207,44 @@ test('scratch files and other languages do not make a pass stale', () => {
   assert.equal(readTurn(lines([...passed, cy, result(y, 'ok', false)]), { cwd: join(root, 'app') }).stale.length, 1, 'its own');
 });
 
+test('a shell edit counts as an edit: sed -i, perl -i, a redirect, a copy onto code', () => {
+  const [a, ca] = call('npm test');
+  const passed = [prompt('go'), { ...ca, cwd: '/repo' }, result(a, '12 passing', false)];
+  const stale = (command, out = '', isError = false) => {
+    const [b, cb] = call(command);
+    return readTurn(lines([...passed, { ...cb, cwd: '/repo' }, result(b, out, isError), say('Done.')]), { cwd: '/repo' }).stale.map(s => s.detail);
+  };
+  assert.deepEqual(stale("sed -i '' 's/==/===/' src/auth.ts"), ['passed, then you changed auth.ts']);
+  assert.deepEqual(stale("cd src && perl -pi -e 's/a/b/' auth.ts"), ['passed, then you changed auth.ts'], 'resolved from the cd');
+  assert.deepEqual(stale("cat > src/auth.ts <<'EOF'\nexport const ok = true;\nEOF"), ['passed, then you changed auth.ts']);
+  assert.deepEqual(stale('cp /tmp/auth.ts src/auth.ts'), ['passed, then you changed auth.ts']);
+  assert.deepEqual(stale("sed -i 's/a/b/' src/auth.ts", 'Exit code 1\nsed: no match', true), ['passed, then you changed auth.ts'], 'a failed command may still have written');
+  const [e, ce] = edit('/repo/src/auth.ts');
+  const out = JSON.parse(runHook([...passed, ce, result(e, 'ok', false), ...(() => {
+    const [b, cb] = call("sed -i '' 's/x/y/' src/auth.ts");
+    return [{ ...cb, cwd: '/repo' }, result(b, '', false)];
+  })(), say('Done.')]));
+  assert.match(out.reason, /passed, then you changed auth\.ts\)/, 'named once');
+});
+
+test('a shell edit is not a change when a check follows it, it undoes itself, or it writes no code', () => {
+  const [a, ca] = call('npm test');
+  const passed = [prompt('go'), { ...ca, cwd: '/repo' }, result(a, '12 passing', false)];
+  const stale = (command, out = '') => {
+    const [b, cb] = call(command);
+    return readTurn(lines([...passed, { ...cb, cwd: '/repo' }, result(b, out, false), say('Done.')]), { cwd: '/repo' }).stale;
+  };
+  assert.deepEqual(stale("sed -i '' 's/x/y/' src/auth.ts && npm test", '12 passing'), [], 'rechecked in the same command');
+  assert.equal(stale("npm test && sed -i '' 's/x/y/' src/auth.ts", '12 passing').length, 1, 'changed after the check in the same command');
+  assert.deepEqual(stale("F=src/a.ts && cp $F /tmp/a.bak && sed -i '' 's/x/y/' $F && npm test; cp /tmp/a.bak $F", 'Tests: 1 failed'), [], 'a trial put back');
+  assert.deepEqual(stale('npm run build > build.log 2>&1; tail build.log', 'done'), [], 'a log');
+  assert.deepEqual(stale('echo hi > /tmp/note.ts; sed -n 1,5p src/auth.ts', 'x'), [], 'scratch, and a read');
+  assert.deepEqual(stale('git checkout -- src/auth.ts'), [], 'a checkout puts code back');
+  assert.deepEqual(stale('sed -i "s/a/b/" $FILE'), [], 'an unknown file');
+  assert.deepEqual(stale('git commit -qm "Settings > Build an app" && echo \'a > b.ts\''), [], 'a > in quotes');
+  assert.deepEqual(stale('[[ "$G" > "18:40:36" ]] && echo newer'), [], 'a comparison');
+});
+
 test('a notebook edit counts; a subagent edit does not', () => {
   const [a, ca] = call('pytest');
   const [e, ce] = edit('/repo/analysis.ipynb', 'NotebookEdit');

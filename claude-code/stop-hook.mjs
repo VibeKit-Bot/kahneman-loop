@@ -213,8 +213,13 @@ function place(dir, project) {
 // Files a simple command writes, copies it takes first and directories it
 // deletes, so a run between a change and its undo, or in a copy thrown away
 // after, can be told from a run on the code as it stands. `at` is where it runs.
+// `edits` are the writes that change a file in place (a redirect, `sed -i`, a
+// copy onto it), as full paths; `copyTo` is a copy's target and `taken` its sources.
 function fileOps(text, expand, at = '') {
-  const writes = [...text.matchAll(REDIRECT_TO_RE)].map(m => expand(m[1]));
+  // A `>` in quotes is text (`git commit -m "A > B"`), and in `[[ ]]` a comparison.
+  const bare = text.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, q => q[0] + '_'.repeat(q.length - 2) + q[0]);
+  const writes = /^[\s({!]*\[\[\s/.test(text) ? [] : [...bare.matchAll(REDIRECT_TO_RE)]
+    .map(m => expand(text.slice(m.index + m[0].length - m[1].length, m.index + m[0].length)));
   const words = tokens(text.replace(REDIRECT_TO_RE, ' ').replace(/(?:^|\s)\d*>&\d/g, ' ')).map(expand).filter(Boolean);
   while (words.length && ASSIGN_RE.test(words[0])) words.shift();
   const [cmd = '', sub = ''] = words, args = words.slice(1).filter(a => !a.startsWith('-'));
@@ -222,9 +227,12 @@ function fileOps(text, expand, at = '') {
   let stash = '';
   if (/^(?:cp|mv|install|rsync)$/.test(cmd) && args.length > 1) { writes.push(args[args.length - 1]); copies.push(...args.slice(0, -1)); }
   if (/^(?:sed|perl)$/.test(cmd) && words.some(w => /^-\w*i/.test(w)) && args.length) writes.push(args[args.length - 1]);
+  const abs = (p, base = at) => (/[$*?`]/.test(p) ? '' : isAbsolute(p) ? resolve(p) : base ? resolve(base, p) : '');
+  const edits = writes.map(f => abs(f)).filter(Boolean); // not git's: a checkout puts code back
+  const copying = /^(?:cp|mv|install|rsync)$/.test(cmd) && args.length > 1;
+  const copyTo = copying ? abs(args[args.length - 1]) : '', taken = copying ? copies.map(f => abs(f)).filter(Boolean) : [];
   if (cmd === 'git' && /^(?:checkout|restore)$/.test(sub)) { const at = words.indexOf('--'); writes.push(...(at > 0 ? words.slice(at + 1) : args.slice(1))); }
   if (cmd === 'git' && sub === 'stash') { const act = words.slice(2).find(w => !w.startsWith('-')) || 'push'; stash = /^(?:push|save)$/.test(act) ? 'push' : /^(?:pop|apply)$/.test(act) ? 'pop' : ''; }
-  const abs = (p, base = at) => (isAbsolute(p) ? resolve(p) : base ? resolve(base, p) : '');
   const removes = cmd === 'rm' && words.some(w => /^-\w*[rR]/.test(w)) ? args.map(a => abs(a)) : [];
   if (cmd === 'git') { // `git -C repo worktree remove --force wt`
     let k = 1, base = at;
@@ -232,7 +240,7 @@ function fileOps(text, expand, at = '') {
     const rest = words.slice(k + 2).filter(w => !w.startsWith('-'));
     if (words[k] === 'worktree' && words[k + 1] === 'remove' && rest.length) removes.push(abs(rest[rest.length - 1], base));
   }
-  return { writes, copies, stash, removes: removes.filter(Boolean) };
+  return { writes, copies, stash, removes: removes.filter(Boolean), edits, copyTo, taken };
 }
 
 // ---------------------------------------------------------------------------
@@ -288,7 +296,10 @@ const STATUS_RE = /\$\{PIPESTATUS\[0\]\}|\$\{?pipestatus\[1\]\}?|\$\?/;
  * and `project` the project's directory, when known. A check after one that
  * failed in the same `&&` chain never ran and is left out.
  */
-export function checkRuns(command, output = '', code = null, { dir = '', project = '' } = {}) {
+export const checkRuns = (...args) => readCommand(...args).runs;
+
+/** checkRuns, and the code files the command changed outside its checks: `{ full, at }`, `at` the segment. */
+function readCommand(command, output = '', code = null, { dir = '', project = '' } = {}) {
   const segs = splitShell(command);
   const heads = segs.map(s => headOf(s.text));
   const pipefail = /\bpipefail\b/.test(command);
@@ -472,7 +483,14 @@ export function checkRuns(command, output = '', code = null, { dir = '', project
     if (ok === false) stopped = c.p;
     runs.push({ ...run, ok, detail, source });
   }
-  return runs;
+  // A copy back onto a file the command copied away first is an undo, not a change.
+  const taken = new Set(), edits = [];
+  ops.forEach((o, j) => {
+    if (inCheck.has(j)) return;
+    for (const f of o.edits) if (!(f === o.copyTo && taken.has(f))) edits.push({ full: f, at: j });
+    o.taken.forEach(f => taken.add(f));
+  });
+  return { runs, edits };
 }
 
 // ---------------------------------------------------------------------------
@@ -588,14 +606,20 @@ export function readTurn(lines, { cwd = '', readOutput = readTail } = {}) {
         // A failed command reads "Exit code N" first. Any other error (a
         // denied permission, a blocked call, a timeout) is not the check's outcome.
         if (x.is_error && !/^Exit code \d+/.test(out)) continue;
-        if (bg || /^Command running in background\b/.test(out)) {
-          const started = checkRuns(command, '', null, { dir, project: cwd }).map(r => ({ ...r, ok: null, source: 'background', command }));
-          if (started.length) background.set(x.tool_use_id, { command, dir, runs: started });
-          runs.push(...started);
+        const started = bg || /^Command running in background\b/.test(out);
+        const code = started ? null : x.is_error ? Number(/^Exit code (\d+)/.exec(out)[1]) : 0;
+        const read = readCommand(command, started ? '' : out.replace(/^Exit code \d+\n?/, ''), code, { dir, project: cwd });
+        // `sed -i`, a redirect or a copy onto code changes it as an edit does.
+        for (const w of read.edits) {
+          if (isCode(w.full, [cwd])) edits.push({ path: basename(w.full), full: w.full, eco: ecoOfFile(w.full), after: runs.length + read.runs.filter(r => r.at < w.at).length });
+        }
+        if (started) {
+          const runsNow = read.runs.map(r => ({ ...r, ok: null, source: 'background', command }));
+          if (runsNow.length) background.set(x.tool_use_id, { command, dir, runs: runsNow });
+          runs.push(...runsNow);
           continue;
         }
-        const code = x.is_error ? Number(/^Exit code (\d+)/.exec(out)[1]) : 0;
-        runs.push(...checkRuns(command, out.replace(/^Exit code \d+\n?/, ''), code, { dir, project: cwd }).map(r => ({ ...r, command })));
+        runs.push(...read.runs.map(r => ({ ...r, command })));
       } else if (o.type === 'user' && x.type === 'tool_result' && editCalls.has(x.tool_use_id) && !x.is_error) {
         const path = editCalls.get(x.tool_use_id);
         edits.push({ path: basename(path), full: path, eco: ecoOfFile(path), after: runs.length });
