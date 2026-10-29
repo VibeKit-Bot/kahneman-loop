@@ -214,8 +214,8 @@ export function handBack(input: {
   if (repeated.length) {
     return (
       `[System: your own check this turn came back failed: ${named([...repeated, ...input.failures.filter(f => !before.has(f.key))])}.${note} ` +
-      'It also failed on an earlier turn, so running it again before you change anything will fail again. A failed check is not done, whatever the reply says. ' +
-      `Find the cause first: read the error, the logs and the code the check goes through. Fix it, then ${input.recheck || 'run the check again'}. ` +
+      'It failed on an earlier turn too. A failed check is not done, whatever the reply says. ' +
+      `Look for the cause before you run it again unchanged: read the error, the logs and the code the check goes through. Fix what you find, then ${input.recheck || 'run the check again'}. ` +
       `If you cannot find or fix the cause, say plainly that it still fails, what you tried and what you need to fix it. ` +
       `${replyReplaced(input.language)}]`
     );

@@ -153,8 +153,8 @@ A check that fails again on a later turn gets a different hand-back. Told "fix t
 check again" turn after turn, the agent runs the check again: on VibeKit, a chat check whose reply never
 came failed on six turns of one day, and each hand-back bought one more run and one more honest "still
 failing", with no look at why. So when the same check was still failing at the end of an earlier turn,
-the hand-back says running it again will fail again, and asks the agent to find the cause first, or to
-say what it tried and what it needs.
+the hand-back says so and asks the agent to look for the cause before it runs the check again
+unchanged, or to say what it tried and what it needs.
 
 The [Ralph loop](https://ghuntley.com/ralph/) keeps an agent going round on the same task. The Kahneman
 Loop is a single extra round, and only when the agent's own check says the story is wrong.

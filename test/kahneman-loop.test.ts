@@ -101,15 +101,15 @@ test('hand-back: what the check saw cannot close the message early', () => {
   assert.equal(fact.indexOf(']'), fact.length - 1);
 });
 
-test('hand-back: a check that also failed on an earlier turn asks for the cause, not another run', () => {
+test('hand-back: a check that also failed on an earlier turn asks for the cause before another run', () => {
   const failures = [
     { key: 'click "Save"', ok: false, detail: 'did not change anything' },
     { key: 'send "Message"', ok: false, detail: 'no reply appeared within 20s' },
   ];
   const fact = handBack({ failures, alreadyHandedBack: false, failedBefore: ['send "Message"', 'npm test'], recheck: 'render the page again', language: 'French' })!;
   assert.match(fact, /^\[System: your own check this turn came back failed: send "Message" \(no reply appeared within 20s\); click "Save" \(did not change anything\)\. /, 'the repeat is named first, with the same opening');
-  assert.match(fact, /It also failed on an earlier turn, so running it again before you change anything will fail again\. A failed check is not done/);
-  assert.match(fact, /Find the cause first: read the error, the logs and the code the check goes through\. Fix it, then render the page again\. /);
+  assert.match(fact, /\. It failed on an earlier turn too\. A failed check is not done/);
+  assert.match(fact, /Look for the cause before you run it again unchanged: read the error, the logs and the code the check goes through\. Fix what you find, then render the page again\. /);
   assert.match(fact, /If you cannot find or fix the cause, say plainly that it still fails, what you tried and what you need to fix it\. /);
   assert.ok(fact.endsWith(`${replyReplaced('French')}]`));
   assert.equal(handBack({ failures, alreadyHandedBack: true, failedBefore: ['send "Message"'] }), null, 'still once a turn');
@@ -146,7 +146,7 @@ test('runTurnWithHandBack: the continuation is the reply, and there is one conti
   const sent3: string[][] = [];
   const run3 = async (m: string[]) => { sent3.push(m); if (sent3.length === 1) again.record('npm test', false, '1 failing'); return `reply ${sent3.length}`; };
   await runTurnWithHandBack({ messages: ['hi'], ledger: again, run: run3, continueWith: (r, f) => [r, f], failedBefore: ['npm test'] });
-  assert.match(sent3[1][2], /It also failed on an earlier turn/, 'failedBefore reaches the hand-back');
+  assert.match(sent3[1][2], /It failed on an earlier turn too/, 'failedBefore reaches the hand-back');
 });
 
 test('recheckStatus: what the user sees while a hand-back runs', () => {
