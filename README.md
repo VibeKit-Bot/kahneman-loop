@@ -149,6 +149,13 @@ language. (No text rule we tried could tell bad replies from fine ones; see
 [eval/RESULTS.md](eval/RESULTS.md).) It fires once per turn, never in a loop: System 2 is called in,
 not left running. On turns where no check failed or went out of date, there's no extra round at all.
 
+A check that fails again on a later turn gets a different hand-back. Told "fix the cause and run the
+check again" turn after turn, the agent runs the check again: on VibeKit, a chat check whose reply never
+came failed on six turns of one day, and each hand-back bought one more run and one more honest "still
+failing", with no look at why. So when the same check was still failing at the end of an earlier turn,
+the hand-back says running it again will fail again, and asks the agent to find the cause first, or to
+say what it tried and what it needs.
+
 The [Ralph loop](https://ghuntley.com/ralph/) keeps an agent going round on the same task. The Kahneman
 Loop is a single extra round, and only when the agent's own check says the story is wrong.
 
@@ -222,6 +229,7 @@ if (!shot.ok) return withVerdict(shot, verdict.notChecked('the page did not rend
 // 2. Also in the executor: record every check the agent runs, and every code change (one ledger per turn).
 ledger.record(`click ${selector}`, changed, changed ? undefined : 'the click did not change anything');
 ledger.recordEdit(file.path); // not for docs or notes
+if (changed) session.failedBefore.delete(`click ${selector}`); // a pass clears an earlier turn's failure
 
 // 3. Around the turn: hand a standing failure back once.
 const { reply } = await runTurnWithHandBack({
@@ -233,13 +241,17 @@ const { reply } = await runTurnWithHandBack({
     { role: 'user', content: fact },
   ],
   language: user.language,
+  failedBefore: [...session.failedBefore],
   onRecheck: status => showStatus(status.text), // "Rechecking: npm test failed this turn, ..."
 });
+for (const f of ledger.standingFailures()) session.failedBefore.add(f.key); // still failing as the turn ends
 ```
 
 If your loop doesn't fit `runTurnWithHandBack`, call `handBack({ failures: ledger.standingFailures(),
 stale: ledger.staleChecks(), alreadyHandedBack })` where your turn ends. It returns the message to
-send, or `null`. A standing failure goes back before an out-of-date pass. Pass `recheck`
+send, or `null`. A standing failure goes back before an out-of-date pass. Pass `failedBefore`, the
+keys still failing at the end of an earlier turn, so a repeat failure asks for the cause; the ledger
+starts fresh each turn, so the session keeps these. Pass `recheck`
 to name how your harness runs the check again, and `note` for anything that gets past the failure
 (a saved test login, say). The note goes in exactly as you write it; failure names are clipped and lose
 their brackets, since they come from what the check saw. If your harness hands back evidence of its

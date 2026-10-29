@@ -170,12 +170,26 @@ export function replyReplaced(language?: string): string {
  * we tried separated bad replies from fine ones (eval/RESULTS.md). An honest
  * reply that already says the check failed costs one continuation, which is
  * cheaper than the user finding the failure and typing it back.
+ *
+ * A failure that already came back on an earlier turn asks for the cause
+ * instead of another run. Told "fix the cause and run the check again" turn
+ * after turn, the agent runs the check again: on our traffic (2026-10-28) a
+ * chat check whose reply never came failed on six turns of one day, and each
+ * hand-back bought one more run of it, one more honest "still failing", and
+ * no look at why.
  */
 export function handBack(input: {
   failures: CheckRun[];
   /** `ledger.staleChecks()`. Handed back only when nothing is failing. */
   stale?: CheckRun[];
   alreadyHandedBack: boolean;
+  /**
+   * Keys of checks still failing at the end of an earlier turn. The ledger
+   * starts fresh each turn, so keep these yourself, per session: add the
+   * turn's `standingFailures()` when it ends, and drop a key when a later run
+   * of its check passes.
+   */
+  failedBefore?: readonly string[];
   /** The language the user writes in, if you know it. */
   language?: string;
   /** How to run the check again in your harness, e.g. "render the page again and click the control you changed". */
@@ -195,6 +209,17 @@ export function handBack(input: {
       .map(f => `${clip(f.key, 120)}${f.detail ? ` (${clip(f.detail, 160)})` : ''}`)
       .join('; ');
   const note = input.note?.trim() ? ` ${input.note.trim()}` : '';
+  const before = new Set(input.failedBefore ?? []);
+  const repeated = input.failures.filter(f => before.has(f.key));
+  if (repeated.length) {
+    return (
+      `[System: your own check this turn came back failed: ${named([...repeated, ...input.failures.filter(f => !before.has(f.key))])}.${note} ` +
+      'It also failed on an earlier turn, so running it again before you change anything will fail again. A failed check is not done, whatever the reply says. ' +
+      `Find the cause first: read the error, the logs and the code the check goes through. Fix it, then ${input.recheck || 'run the check again'}. ` +
+      `If you cannot find or fix the cause, say plainly that it still fails, what you tried and what you need to fix it. ` +
+      `${replyReplaced(input.language)}]`
+    );
+  }
   if (input.failures.length) {
     return (
       `[System: your own check this turn came back failed: ${named(input.failures)}.${note} A failed check is not done, whatever the reply says. ` +
@@ -251,13 +276,15 @@ export async function runTurnWithHandBack<M>(opts: {
   /** Build the two messages that carry the hand-back in your message format. */
   continueWith: (reply: string, fact: string) => M[];
   language?: string;
+  /** Keys of checks still failing at the end of an earlier turn (see handBack). */
+  failedBefore?: readonly string[];
   /** Show the user that the agent is rechecking (recheckStatus), before the second round starts. */
   onRecheck?: (status: RecheckStatus) => void;
 }): Promise<{ reply: string; handedBack: boolean }> {
   const reply = await opts.run(opts.messages);
   const failures = opts.ledger.standingFailures();
   const stale = opts.ledger.staleChecks();
-  const fact = handBack({ failures, stale, alreadyHandedBack: false, language: opts.language });
+  const fact = handBack({ failures, stale, alreadyHandedBack: false, language: opts.language, failedBefore: opts.failedBefore });
   if (!fact) return { reply, handedBack: false };
   const status = recheckStatus({ failures, stale });
   if (status) opts.onRecheck?.(status);
