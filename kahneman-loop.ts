@@ -39,7 +39,21 @@ export const verdict = {
   failed: (what: string, detail?: string): string => `FAILED: ${what}${detail ? `: ${detail}` : ''}. Not verified.`,
   /** The outcome was observed directly. */
   confirmed: (what: string): string => `Confirmed: ${what}.`,
+  /**
+   * A code change that saved. "Successfully replaced the text" reads as
+   * evidence the change works, and with no check after it that is the last
+   * thing the agent saw before it says "done". This says what the result does
+   * not show, and only that: a hook on one result can't know whether anything
+   * has run since, so it doesn't say so, and it doesn't ask for a check,
+   * which would buy one after every edit. Not yet measured (README.md).
+   */
+  changeSaved: (): string => 'Change saved. This result does not verify the changed behavior.',
 };
+
+/** A file whose change rarely affects a check: leave it out of `recordEdit` and `verdict.changeSaved`. */
+export function isDocPath(path: string): boolean {
+  return /\.(md|mdx|markdown|rst|txt)$/i.test(path);
+}
 
 /**
  * Put the verdict in front of a JSON tool result, so it is the first thing
@@ -98,7 +112,7 @@ export class CheckLedger {
     this.runs.push({ key, ok, detail });
   }
 
-  /** The agent changed code (an edit, a patch, a write). Leave out docs and notes, which rarely affect a check. */
+  /** The agent changed code (an edit, a patch, a write). Leave out docs and notes (`isDocPath`), which rarely affect a check. */
   recordEdit(what: string): void {
     this.edits.push({ what, after: this.runs.length });
   }

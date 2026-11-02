@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CheckLedger, handBack, jobVerdict, recheckStatus, replyReplaced, runTurnWithHandBack, verdict, withVerdict } from '../kahneman-loop.ts';
+import { CheckLedger, handBack, isDocPath, jobVerdict, recheckStatus, replyReplaced, runTurnWithHandBack, verdict, withVerdict } from '../kahneman-loop.ts';
 
 test('the verdict comes first in a tool result', () => {
   const out = withVerdict({ status: 'starting', jobId: 'j1' }, verdict.notDoneYet('live', 'starting', 'its status is "done"'));
@@ -157,4 +157,14 @@ test('recheckStatus: what the user sees while a hand-back runs', () => {
   assert.deepEqual(stale?.checks, ['npm test', 'tsc'], 'at most two checks');
   assert.match(stale!.text, /^Rechecking: the code changed after npm test and tsc passed/);
   assert.equal(recheckStatus({ failures: [] }), null);
+});
+
+test('a saved change says what it does not show, and never claims nothing ran', () => {
+  assert.equal(verdict.changeSaved(), 'Change saved. This result does not verify the changed behavior.');
+  assert.doesNotMatch(verdict.changeSaved(), /nothing|has not run|run a check/i);
+});
+
+test('docs and notes are told apart from code by the path', () => {
+  for (const p of ['README.md', 'notes/plan.MD', 'a.mdx', 'a.markdown', 'a.rst', 'todo.txt']) assert.equal(isDocPath(p), true, p);
+  for (const p of ['src/a.ts', 'app.py', 'package.json', 'index.html', 'md', 'Makefile', 'a.md.ts']) assert.equal(isDocPath(p), false, p);
 });

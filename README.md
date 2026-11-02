@@ -119,6 +119,18 @@ seen. A tool result that doesn't establish the outcome says so in its first fiel
 The same goes for a check that couldn't run (`NOT checked: the page did not render`) and a call
 that was refused (`NOT checked: the call was refused before anything ran: ...`).
 
+The same goes for a code change. `Successfully replaced the text` reads as evidence that the change works, and
+when no check follows, it's the last thing the agent saw before it says "done". So the result says what it
+doesn't show (`verdict.changeSaved()`):
+
+```diff
+  Successfully replaced text in src/login.ts.
++ Change saved. This result does not verify the changed behavior.
+```
+
+It doesn't say nothing has run, because a hook on one result can't know that, and it doesn't ask for a check,
+which would buy one after every edit. **This line isn't measured yet**: the results above don't include it.
+
 **2. Raise the surprise: hand back once.** When the agent is about to end its turn and one of its own
 checks from this turn is still failing (no later run of the same check passed), the turn isn't over. The
 failure goes back to the agent as one message, and that is what calls System 2 in: the agent runs the
