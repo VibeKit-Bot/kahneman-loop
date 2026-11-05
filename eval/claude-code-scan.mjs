@@ -40,7 +40,7 @@ const isNotice = o => o.type === 'user' && !isPrompt(o) && textOf(o.message && o
 // Stands in for the hook's own hand-back, so the turn is read from after it.
 const HANDED_BACK = JSON.stringify({ type: 'attachment', attachment: { type: 'hook_blocking_error', hookEvent: 'Stop', blockingError: { blockingError: '[Kahneman Loop: (scan)]' } } });
 
-const totals = { sessions: sessions.length, turns: 0, stops: 0, stopsWithCheck: 0, failed: 0, stale: 0 };
+const totals = { sessions: sessions.length, turns: 0, stops: 0, stopsWithCheck: 0, failed: 0, stale: 0, ownCheck: 0 };
 const runs = { exit: 0, echo: 0, output: 0, background: 0, trial: 0, unknown: 0, passed: 0, failed: 0 };
 const seen = new Set(); // resumed sessions write the same entries again
 writeFileSync(out, '');
@@ -52,10 +52,12 @@ for (const file of sessions) {
     if (!turn || !turn.ended) return;
     turn.ended = false;
     totals.stops++;
-    const { failures, stale, runs: all } = readTurn(turn.lines, { cwd });
+    const { failures, stale, runs: all, unchecked } = readTurn(turn.lines, { cwd });
     const fresh = all.slice(turn.counted);
     turn.counted = all.length;
     for (const r of fresh) { runs[r.source]++; if (r.ok === true) runs.passed++; if (r.ok === false) runs.failed++; }
+    // Where `--check` would run your check: code changed in the project, no passing check after it.
+    if (!failures.length && cwd && unchecked.some(f => f.startsWith(`${cwd}/`))) totals.ownCheck++;
     if (!all.length) return;
     totals.stopsWithCheck++;
     const kind = failures.length ? 'failed' : stale.length ? 'stale' : '';
@@ -98,6 +100,7 @@ const judged = runs.passed + runs.failed;
 const all = runs.exit + runs.echo + runs.output + runs.background + runs.trial + runs.unknown;
 console.log(`${totals.sessions} sessions, ${totals.turns} turns, ${totals.stops} stops.`);
 console.log(`${totals.stopsWithCheck} stops had a check in their turn. The hook would hand back at ${totals.failed + totals.stale}: ${totals.failed} failed, ${totals.stale} stale.`);
+console.log(`With --check, the hook would run your check at ${totals.ownCheck} stops (${pct(totals.ownCheck, totals.stops)}): code changed and no check passed after it.`);
 console.log(`Check runs: ${all}. Outcome read for ${judged} (${pct(judged, all)}): ${runs.passed} passed, ${runs.failed} failed.`);
 console.log(`  read from: exit code ${runs.exit}, echoed status ${runs.echo}, output ${runs.output}; background ${runs.background}; trials on old or temp code ${runs.trial}; unknown ${runs.unknown}.`);
 console.log(`Each would-be hand-back is in ${out}. Read them: a catch is a reply that says done while its own check says otherwise.`);

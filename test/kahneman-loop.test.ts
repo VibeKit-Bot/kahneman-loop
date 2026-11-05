@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CheckLedger, handBack, isDocPath, jobVerdict, recheckStatus, replyReplaced, runTurnWithHandBack, verdict, withVerdict } from '../kahneman-loop.ts';
+import { CheckLedger, handBack, isDocPath, jobVerdict, judgeAnswer, recheckStatus, replyReplaced, runTurnWithHandBack, verdict, withVerdict } from '../kahneman-loop.ts';
 
 test('the verdict comes first in a tool result', () => {
   const out = withVerdict({ status: 'starting', jobId: 'j1' }, verdict.notDoneYet('live', 'starting', 'its status is "done"'));
@@ -126,7 +126,7 @@ test('runTurnWithHandBack: the continuation is the reply, and there is one conti
   const run = async (m: string[]) => { sent.push(m); if (sent.length === 1) l.record('npm test', false, '1 failing'); return `reply ${sent.length}`; };
   const shown: string[] = [];
   const out = await runTurnWithHandBack({ messages: ['hi'], ledger: l, run, continueWith: (r, f) => [r, f], onRecheck: s => shown.push(`${s.kind} ${sent.length}`) });
-  assert.deepEqual(out, { reply: 'reply 2', handedBack: true });
+  assert.deepEqual(out, { reply: 'reply 2', handedBack: true, outcome: 'contradicted' }, 'the check still fails after the answer');
   assert.deepEqual(shown, ['failed 1'], 'the user is told once, before the second round');
   assert.equal(sent.length, 2);
   assert.match(sent[1][2], /npm test \(1 failing\)/);
@@ -134,7 +134,7 @@ test('runTurnWithHandBack: the continuation is the reply, and there is one conti
   const edited = new CheckLedger();
   const sent2: string[][] = [];
   const run2 = async (m: string[]) => { sent2.push(m); if (sent2.length === 1) { edited.record('npm test', true); edited.recordEdit('src/auth.ts'); } return `reply ${sent2.length}`; };
-  assert.deepEqual(await runTurnWithHandBack({ messages: ['hi'], ledger: edited, run: run2, continueWith: (r, f) => [r, f] }), { reply: 'reply 2', handedBack: true });
+  assert.deepEqual(await runTurnWithHandBack({ messages: ['hi'], ledger: edited, run: run2, continueWith: (r, f) => [r, f] }), { reply: 'reply 2', handedBack: true, outcome: 'unchecked' });
   assert.match(sent2[1][2], /npm test \(passed, then you changed src\/auth\.ts\)/);
 
   const clean = new CheckLedger();
@@ -167,4 +167,101 @@ test('a saved change says what it does not show, and never claims nothing ran', 
 test('docs and notes are told apart from code by the path', () => {
   for (const p of ['README.md', 'notes/plan.MD', 'a.mdx', 'a.markdown', 'a.rst', 'todo.txt']) assert.equal(isDocPath(p), true, p);
   for (const p of ['src/a.ts', 'app.py', 'package.json', 'index.html', 'md', 'Makefile', 'a.md.ts']) assert.equal(isDocPath(p), false, p);
+});
+
+test('the ledger: what no check has run after, what failed since the last change, what passed again', () => {
+  const l = new CheckLedger();
+  assert.deepEqual(l.unchecked(), []);
+  l.recordEdit('src/a.ts');
+  l.recordEdit('src/a.ts');
+  assert.deepEqual(l.unchecked(), ['src/a.ts'], 'a change with no check at all');
+  l.record('npm test', false, '1 failing');
+  assert.deepEqual(l.unchecked(), [], 'any check after the change has looked at it');
+  assert.deepEqual(l.freshFailures().map(f => f.key), ['npm test']);
+  const mark = l.size;
+  l.recordEdit('src/b.ts');
+  assert.deepEqual(l.unchecked(), ['src/b.ts']);
+  assert.deepEqual(l.freshFailures(), [], 'a failure from before the repair is about code that no longer exists');
+  assert.equal(l.standingFailures().length, 1, 'it still stands until the check runs again');
+  assert.equal(l.passedAfter(['npm test'], mark), false);
+  l.record('npm test', true);
+  assert.equal(l.passedAfter(['npm test'], mark), true);
+  assert.equal(l.passedAfter(['npm test', 'tsc'], mark), false, 'every handed-back check');
+  assert.equal(l.passedAfter([], mark), false, 'no keys: nothing was checked');
+  l.recordEdit('src/c.ts');
+  assert.equal(l.passedAfter(['npm test'], mark), false, 'a pass before the last change does not check it');
+});
+
+test('hand-back: what the harness saw for itself goes back after the agent\'s own failures, before a stale pass', () => {
+  const look = { key: 'npm test', saw: 'npm test, run after your reply, failed: 2 failing in login.test.ts' };
+  const fact = handBack({ failures: [], look, stale: [{ key: 'tsc', ok: true }], alreadyHandedBack: false, recheck: 'run npm test', language: 'French' })!;
+  assert.equal(fact, `[System: npm test, run after your reply, failed: 2 failing in login.test.ts. That is not done, whatever the reply says. Fix the cause and run npm test. If you cannot fix it, say plainly that it failed and why. ${replyReplaced('French')}]`);
+  assert.match(handBack({ failures: [{ key: 'click "Go"', ok: false }], look, alreadyHandedBack: false })!, /your own check this turn came back failed: click "Go"/, 'the agent\'s own check first');
+  assert.match(handBack({ failures: [], look: { key: 'page', saw: 'the page is still deploying', ask: 'Say so and wait for it.' }, alreadyHandedBack: false })!,
+    /^\[System: the page is still deploying\. Say so and wait for it\. Your reply above is replaced/, 'the harness\'s own ask');
+  assert.equal(handBack({ failures: [], look: { key: 'npm test', saw: null }, alreadyHandedBack: false }), null, 'a clean look hands back nothing');
+  const clean = { key: 'npm test', saw: null };
+  assert.equal(handBack({ failures: [], look: clean, stale: [{ key: 'tsc', ok: true }], alreadyHandedBack: false }), null, 'a clean look is a pass after the change, so it clears a stale pass');
+  assert.equal(recheckStatus({ failures: [], look: clean, stale: [{ key: 'tsc', ok: true }] }), null);
+  assert.match(handBack({ failures: [{ key: 'tsc', ok: false }], look: clean, alreadyHandedBack: false })!, /came back failed: tsc/, 'a clean look never clears a failure');
+  assert.equal(handBack({ failures: [], look, alreadyHandedBack: true }), null, 'once a turn');
+  assert.deepEqual(recheckStatus({ failures: [], look, stale: [{ key: 'tsc', ok: true }] }),
+    { kind: 'look', checks: ['npm test'], text: 'Rechecking: npm test found a problem after the reply, so the agent is taking another look before it replies.' });
+});
+
+test('judgeAnswer: fresh evidence about the version the answer describes', () => {
+  const base = { standing: 0, fresh: 0, checkedFinal: false };
+  assert.equal(judgeAnswer({ ...base, handedBack: 'check', checkedFinal: true }), 'confirmed');
+  assert.equal(judgeAnswer({ ...base, handedBack: 'check' }), 'unchecked', 'not run again');
+  assert.equal(judgeAnswer({ ...base, handedBack: 'check', standing: 1, fresh: 1 }), 'contradicted');
+  assert.equal(judgeAnswer({ ...base, handedBack: 'check', standing: 1 }), 'unchecked', 'a failure from before the repair');
+  assert.equal(judgeAnswer({ ...base, handedBack: 'check', checkedFinal: true, current: false }), 'unchecked', 'the checks see another version');
+  assert.equal(judgeAnswer({ ...base, handedBack: 'look', lookAgain: { key: 'page', saw: null } }), 'confirmed');
+  assert.equal(judgeAnswer({ ...base, handedBack: 'look', lookAgain: { key: 'page', saw: 'it still throws' } }), 'contradicted');
+  assert.equal(judgeAnswer({ ...base, handedBack: 'look', lookAgain: null }), 'unchecked', 'could not look again');
+  assert.equal(judgeAnswer({ ...base, handedBack: 'look', standing: 1, lookAgain: { key: 'page', saw: null } }), 'unchecked');
+  assert.equal(judgeAnswer({ ...base, handedBack: 'stale', checkedFinal: true }), 'confirmed');
+});
+
+test('runTurnWithHandBack: the harness looks when nothing checked the change, and judges the answer', async () => {
+  const seen = (saw: string | null) => ({ key: 'npm test', saw });
+  // Never checked: the look fails, goes back once, and looks again at the answer.
+  const l = new CheckLedger();
+  const sent: string[][] = [];
+  const looks: string[] = [];
+  const run = async (m: string[]) => { sent.push(m); if (sent.length === 1) l.recordEdit('src/a.ts'); return `reply ${sent.length}`; };
+  const shown: string[] = [];
+  const out = await runTurnWithHandBack({
+    messages: ['hi'], ledger: l, run, continueWith: (r, f) => [r, f], recheck: 'run npm test',
+    look: async reply => { looks.push(reply); return seen(looks.length === 1 ? 'npm test, run after your reply, failed: 1 failing' : null); },
+    onRecheck: s => shown.push(s.kind),
+  });
+  assert.deepEqual(out, { reply: 'reply 2', handedBack: true, outcome: 'confirmed' });
+  assert.deepEqual(looks, ['reply 1', 'reply 2'], 'once before the reply, once on the answer');
+  assert.deepEqual(shown, ['look']);
+  assert.match(sent[1][2], /^\[System: npm test, run after your reply, failed: 1 failing\. That is not done/);
+
+  // A clean look after the change clears a stale pass: no second round.
+  const s = new CheckLedger();
+  let calls = 0;
+  const run2 = async () => { if (++calls === 1) { s.record('npm test', true); s.recordEdit('src/a.ts'); } return `r${calls}`; };
+  assert.deepEqual(await runTurnWithHandBack({ messages: ['hi'], ledger: s, run: run2, continueWith: (r, f) => [r, f], look: async () => seen(null) }), { reply: 'r1', handedBack: false });
+
+  // Could not look (null, or it threw): the stale pass goes back as before.
+  for (const look of [async () => null, async () => { throw new Error('renderer down'); }]) {
+    const t = new CheckLedger();
+    const sent3: string[][] = [];
+    const run3 = async (m: string[]) => { sent3.push(m); if (sent3.length === 1) { t.record('npm test', true); t.recordEdit('src/a.ts'); } return `r${sent3.length}`; };
+    const out3 = await runTurnWithHandBack({ messages: ['hi'], ledger: t, run: run3, continueWith: (r, f) => [r, f], look });
+    assert.equal(out3.handedBack, true);
+    assert.match(sent3[1][2], /you changed the code after your own check passed/);
+  }
+
+  // The agent's own failure goes first and the look never runs; nor without a change.
+  const f = new CheckLedger();
+  let looked = 0;
+  const run4 = async () => { f.recordEdit('src/a.ts'); f.record('npm test', false, '1 failing'); return 'r'; };
+  await runTurnWithHandBack({ messages: ['hi'], ledger: f, run: run4, continueWith: (r, x) => [r, x], look: async () => { looked++; return seen(null); } });
+  await runTurnWithHandBack({ messages: ['hi'], ledger: new CheckLedger(), run: async () => 'r', continueWith: (r, x) => [r, x], look: async () => { looked++; return seen(null); } });
+  assert.equal(looked, 0);
 });

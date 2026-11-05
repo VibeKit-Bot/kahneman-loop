@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkRuns, readTurn, splitShell, standingFailures } from '../claude-code/stop-hook.mjs';
+import { checkRuns, parseArgs, readTurn, splitShell, standingFailures } from '../claude-code/stop-hook.mjs';
 
 const HOOK = fileURLToPath(new URL('../claude-code/stop-hook.mjs', import.meta.url));
 let n = 0;
@@ -18,11 +18,11 @@ const notice = (id, summary, file = '') => ({ type: 'user', origin: { kind: 'tas
 const lines = entries => entries.map(e => JSON.stringify(e));
 const outcome = (command, output, code) => checkRuns(command, output, code).map(r => [r.key, r.ok]);
 
-function runHook(entries, extra = {}) {
+function runHook(entries, extra = {}, args = []) {
   const dir = mkdtempSync(join(tmpdir(), 'kahneman-loop-'));
   const path = join(dir, 'session.jsonl');
   writeFileSync(path, lines(entries).join('\n'));
-  return execFileSync('node', [HOOK], { input: JSON.stringify({ transcript_path: path, stop_hook_active: false, cwd: '/repo', ...extra }) }).toString();
+  return execFileSync('node', [HOOK, ...args], { input: JSON.stringify({ transcript_path: path, stop_hook_active: false, cwd: '/repo', ...extra }), env: { ...process.env, CLAUDE_PROJECT_DIR: '' } }).toString();
 }
 
 test('a failing test left standing blocks the stop, once', () => {
@@ -296,4 +296,57 @@ test('a long session: the turn is read back from the end of the transcript', () 
   const big = result('t-big', 'y'.repeat(3_000_000), false); // a 3 MB entry inside the turn forces the window to grow
   const out = JSON.parse(runHook([...old, prompt('ship it'), ca, big, result(a, 'Exit code 2\nerror TS2304', true), say('Shipped.')]));
   assert.match(out.reason, /`npm run build` \(.*TS2304\)/);
+});
+
+test('--check: when nothing checked the change, the hook runs the check itself', () => {
+  const project = mkdtempSync(join(tmpdir(), 'kahneman-project-'));
+  const at = { cwd: project };
+  const [e, ce] = edit(join(project, 'src/auth.ts'));
+  const changed = [prompt('fix the login bug'), ce, result(e, 'The file has been updated.', false), say('Fixed.')];
+  const failing = ['--check', 'echo "  1) login rejects bad password"; echo "1 failing"; exit 1'];
+
+  assert.equal(runHook(changed, at), '', 'without --check, an unchecked change is left alone as before');
+  const out = JSON.parse(runHook(changed, at, failing));
+  assert.equal(out.decision, 'block');
+  assert.match(out.reason, /^\[Kahneman Loop: no check passed after your last change to auth\.ts, so this hook ran `echo .*` after your last message, and it failed \(exit 1\)\. The end of its output:\n  1\) login rejects bad password\n1 failing\nA failed check is not done/);
+  assert.match(out.systemMessage, /^Kahneman Loop: `echo .*` failed after Claude's last change, so Claude is taking another look before it finishes\.$/);
+  assert.equal(runHook(changed, { ...at, stop_hook_active: true }, failing), '', 'once: the stop after a block goes through');
+
+  writeFileSync(join(project, 'ran'), '');
+  assert.equal(runHook(changed, at, ['--check', 'rm ran; exit 0']), '', 'a pass: silent');
+  assert.equal(existsSync(join(project, 'ran')), false, 'it ran in the project');
+  assert.equal(runHook(changed, at, ['--check', 'no-such-command-kl']), '', 'a check that never ran (127) is not a failure');
+  assert.equal(runHook(changed, at, ['--check', 'sleep 5; exit 1', '--timeout', '1']), '', 'past its timeout it is unknown, never a failure');
+});
+
+test('--check: it runs only when no passing check came after the change, and a pass clears a stale one', () => {
+  const project = mkdtempSync(join(tmpdir(), 'kahneman-project-'));
+  const at = { cwd: project };
+  const failing = ['--check', 'exit 1'];
+  const [a, ca] = call('npm test');
+  const [b, cb] = call('npm test 2>&1 | grep -v warn; echo done');
+  const [e, ce] = edit(join(project, 'src/auth.ts'));
+  const [d, cd] = edit(join(project, 'README.md'));
+  const [x, cx] = edit('/elsewhere/repo-less/notes.txt');
+  const edited = [prompt('go'), ce, result(e, 'ok', false)];
+  assert.equal(runHook([...edited, ca, result(a, '12 passing', false), say('Done.')], at, failing), '', 'a passing check after the change');
+  assert.equal(JSON.parse(runHook([...edited, cb, result(b, 'done', false), say('Done.')], at, failing)).decision, 'block', 'a check whose outcome the transcript does not settle');
+  assert.equal(runHook([prompt('go'), cd, result(d, 'ok', false), say('Done.')], at, failing), '', 'a docs edit');
+  assert.equal(runHook([prompt('go'), cx, result(x, 'ok', false), say('Done.')], at, failing), '', 'an edit outside the project');
+  assert.equal(runHook([prompt('go'), say('Nothing to change.')], at, failing), '', 'no change');
+
+  const stale = [prompt('go'), ca, result(a, '12 passing', false), ce, result(e, 'ok', false), say('Fixed.')];
+  assert.match(JSON.parse(runHook(stale, at)).reason, /you changed the code after your own check passed/, 'without --check, the stale pass as before');
+  assert.equal(runHook(stale, at, ['--check', 'exit 0']), '', 'its own pass after the change checked it');
+  assert.match(JSON.parse(runHook(stale, at, ['--check', 'exit 0', '--timeout=0.001'])).reason, /you changed the code after your own check passed/, 'could not say: the stale pass goes back as before');
+
+  const [f, cf] = call('npm test');
+  const failed = [prompt('go'), ce, result(e, 'ok', false), cf, result(f, 'Exit code 1\n1 failing', true), say('Fixed.')];
+  assert.match(JSON.parse(runHook(failed, at, ['--check', 'exit 0'])).reason, /your own check this turn is still failing/, 'its own failure first, and the check does not run');
+});
+
+test('--check and --timeout are read either way', () => {
+  assert.deepEqual(parseArgs(['--check', 'npm test', '--timeout', '30']), { check: 'npm test', timeoutMs: 30000 });
+  assert.deepEqual(parseArgs(['--check=npm run test:unit -- --run', '--timeout=bad']), { check: 'npm run test:unit -- --run', timeoutMs: 120000 });
+  assert.deepEqual(parseArgs([]), { check: '', timeoutMs: 120000 });
 });

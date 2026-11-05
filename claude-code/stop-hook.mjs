@@ -25,8 +25,16 @@
 //   { "hooks": { "Stop": [ { "hooks": [ { "type": "command",
 //       "command": "node /path/to/kahneman-loop/claude-code/stop-hook.mjs" } ] } ] } }
 //
-// Zero dependencies. Reads the session transcript only; runs nothing.
-// eval/claude-code-scan.mjs replays it over your own past sessions.
+// With `--check '<command>'` it also looks for itself. When Claude changed code
+// in the project and no check after the change passed (none ran, or the
+// transcript does not say how it went), the hook runs that command in the
+// project before Claude stops. A failure goes back the same way, once; a pass
+// means the change is checked, so a stale pass is not handed back. Give the
+// hook entry a "timeout" (seconds) longer than `--timeout` (default 120).
+//
+// Zero dependencies. Reads the session transcript; runs nothing but your
+// `--check` command. eval/claude-code-scan.mjs replays it over your own past sessions.
+import { spawn } from 'node:child_process';
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -636,7 +644,9 @@ export function readTurn(lines, { cwd = '', readOutput = readTail } = {}) {
     const more = changed.length > 3 ? ` and ${changed.length - 3} more` : '';
     return [{ key: runs[i].key, ok: true, detail: `passed, then you changed ${changed.slice(0, 3).join(', ')}${more}` }];
   });
-  return { failures, stale, runs };
+  // Code changes no passing check ran after: what `--check` looks at, in the project.
+  const unchecked = [...new Set(edits.filter(e => !runs.some((r, i) => i >= e.after && r.ok === true && !r.live && touches(r, e))).map(e => e.full))];
+  return { failures, stale, runs, unchecked };
 }
 
 /** The checks of the current turn whose latest run failed. */
@@ -652,6 +662,74 @@ export function handBackReason(failures) {
 export function staleReason(stale) {
   return `[Kahneman Loop: you changed the code after your own check passed: ${name(stale)}. That pass checked the code before the change, so it does not show the change works. `
     + 'Run it again before you say it works. If you cannot, tell the user plainly that the change is not checked.]';
+}
+
+const ANSI_RE = /\x1b\[[0-9;?]*[ -\/]*[@-~]/g;
+
+/** The end of what the check printed, where the failure usually is. */
+function outputTail(out, max = 1500) {
+  const text = String(out || '').replace(ANSI_RE, '').replace(/\r\n?/g, '\n').trimEnd();
+  if (text.length <= max) return text.replace(/^(?:[ \t]*\n)+/, '');
+  const cut = text.slice(-max);
+  return cut.slice(cut.indexOf('\n') + 1);
+}
+
+export function ownCheckReason(command, { code, out }, unchecked = []) {
+  const files = [...new Set(unchecked.map(f => basename(f)))];
+  const more = files.length > 3 ? ` and ${files.length - 3} more` : '';
+  const what = files.length ? ` to ${files.slice(0, 3).join(', ')}${more}` : '';
+  const tail = outputTail(out);
+  return `[Kahneman Loop: no check passed after your last change${what}, so this hook ran \`${clip(command, 120)}\` after your last message, and it failed (exit ${code}).`
+    + (tail ? ` The end of its output:\n${tail}\n` : ' ')
+    + 'A failed check is not done, whatever your last message said. Fix the cause and run it again. If you cannot fix it, tell the user plainly that it failed and why.]';
+}
+
+export function ownCheckStatus(command) {
+  return `Kahneman Loop: \`${clip(command, 60)}\` failed after Claude's last change, so Claude is taking another look before it finishes.`;
+}
+
+/**
+ * Run `--check` in the project. `code` is null when it could not say: it did
+ * not start, or ran past `timeoutMs` (then it is stopped, with what it started).
+ */
+export function runCheck(command, cwd, timeoutMs = 120_000) {
+  return new Promise(done => {
+    let out = '';
+    let child;
+    try {
+      child = spawn(command, { cwd, shell: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch {
+      return done({ code: null, out });
+    }
+    const stopAll = () => {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } }
+    };
+    const keep = chunk => { out = (out + chunk).slice(-64 * 1024); };
+    child.stdout.on('data', keep);
+    child.stderr.on('data', keep);
+    const finish = code => { clearTimeout(timer); stopAll(); done({ code, out }); };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    child.on('error', () => finish(null));
+    // Something it started in the background can hold the output open after
+    // the check itself exits: give it a moment, then go with the exit code.
+    child.on('exit', code => setTimeout(() => finish(code), 1000).unref());
+    child.on('close', code => finish(code));
+  });
+}
+
+/** `--check '<command>'` and `--timeout <seconds>` from the hook's command line. */
+export function parseArgs(argv) {
+  const opts = { check: '', timeoutMs: 120_000 };
+  for (let i = 0; i < argv.length; i++) {
+    const [flag, inline] = argv[i].split(/=(.*)/s);
+    const value = () => (inline !== undefined ? inline : argv[++i] || '');
+    if (flag === '--check') opts.check = value().trim();
+    else if (flag === '--timeout') {
+      const secs = Number(value());
+      if (secs > 0) opts.timeoutMs = secs * 1000;
+    }
+  }
+  return opts;
 }
 
 /**
@@ -687,17 +765,29 @@ export function readTurnLines(path, maxBytes = 256 * 2 ** 20) {
   }
 }
 
-function main() {
+async function main() {
   let input = {};
   try { input = JSON.parse(readFileSync(0, 'utf8') || '{}'); } catch { return; }
   if (input.stop_hook_active || !input.transcript_path) return;
   let lines;
   try { lines = readTurnLines(input.transcript_path); } catch { return; }
   // Claude Code gives hooks the project's directory; `cwd` follows the shell's `cd`.
-  const turn = readTurn(lines, { cwd: process.env.CLAUDE_PROJECT_DIR || input.cwd });
-  const { failures, stale } = turn;
-  const reason = failures.length ? handBackReason(failures) : stale.length ? staleReason(stale) : '';
-  if (reason) process.stdout.write(JSON.stringify({ decision: 'block', reason, systemMessage: statusLine(turn) }));
+  const project = process.env.CLAUDE_PROJECT_DIR || input.cwd;
+  const turn = readTurn(lines, { cwd: project });
+  const { failures } = turn;
+  let { stale } = turn;
+  const block = (reason, systemMessage) => process.stdout.write(JSON.stringify({ decision: 'block', reason, systemMessage }));
+  if (failures.length) return block(handBackReason(failures), statusLine(turn));
+  const { check, timeoutMs } = parseArgs(process.argv.slice(2));
+  const unchecked = project ? turn.unchecked.filter(f => under(f, project)) : [];
+  if (check && unchecked.length && existsSync(project)) {
+    const ran = await runCheck(check, project, timeoutMs);
+    if (ran.code !== null && ran.code !== 0 && !NEVER_RAN.has(ran.code)) return block(ownCheckReason(check, ran, unchecked), ownCheckStatus(check));
+    // A pass after the change checked it, as any check after it would have,
+    // unless the change was also outside the project, where it did not run.
+    if (ran.code === 0 && unchecked.length === turn.unchecked.length) stale = [];
+  }
+  if (stale.length) block(staleReason(stale), statusLine({ failures, stale }));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

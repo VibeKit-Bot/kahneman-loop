@@ -4,7 +4,8 @@
 
 **AI agents say "done" when it isn't.** The deploy hadn't finished, or the test the agent just ran had failed, and
 it tells the user it's fixed anyway. The Kahneman Loop puts what really happened in front of the agent before
-it replies, and hands its own failed check back once before it can say "done".
+it replies, and hands its own failed check back once before it can say "done". When the agent checked
+nothing, your harness can look for itself.
 
 > **With the Kahneman Loop, our agents made 40% fewer false claims, for about 1% more tokens and 1% more time.**
 
@@ -105,8 +106,9 @@ starts from the same context, where the failed check is still twenty steps back.
 ## How it works: System 1.5
 
 The Kahneman Loop sits between the two systems. It's code in your harness, not another model, and it
-does no thinking of its own. It does the two things System 1 can't do for itself: show the missing
-fact, and raise the surprise when the agent's own evidence says the story is wrong.
+does no thinking of its own. It does what System 1 can't do for itself: show the missing fact, raise
+the surprise when the evidence says the story is wrong, and look for itself when the agent checked
+nothing.
 
 **1. Show the missing fact: verdict-first tool results.** WYSIATI can't be argued with, so change what's
 seen. A tool result that doesn't establish the outcome says so in its first field, in plain words:
@@ -168,8 +170,33 @@ failing", with no look at why. So when the same check was still failing at the e
 the hand-back says so and asks the agent to look for the cause before it runs the check again
 unchanged, or to say what it tried and what it needs.
 
+**3. Look for itself, when nothing checked the change.** The loop can only be surprised by a check that
+ran. An agent that edited code and ran nothing has nothing in view to contradict "done", and that's
+the case it most needs help with. So when the code changed and no check of the agent's ran after it,
+your harness can run one itself: the test suite, a render of the page, a parse of the files the turn
+wrote. A failure goes back the same way, once:
+
+```
+agent  (edits src/login.ts, runs nothing)
+       "Fixed the login bug."
+       [System: npm test, run after your reply, failed: 1 failing (login rejects a bad password).
+        That is not done, whatever the reply says. Fix the cause and run the check again. ...]
+```
+
+A pass is a check after the change like any other, so it also clears an out-of-date pass, and the
+turn ends with no extra round. VibeKit has done this since 2026-09-05: after a turn that changed an app
+and never looked at it, the platform loads the live page itself, and an error on load, a blank page or
+the platform's own placeholder goes back to the agent, through this same `look`.
+
+**Then judge the answer.** The reply a hand-back buys is the one the user reads, so it gets the same
+scrutiny. Nothing looked at it at first, and in our first backtest one answer still carried the claim the
+hand-back had just disproved. `judgeAnswer` reads fresh evidence, with no model call: a check that ran
+again after the last change and passed confirms it; a failure recorded after the last change contradicts
+it; anything else, including a failure from before the agent's repair, leaves it unchecked. Use the
+outcome to decide what the next turn starts from, or what to show under the reply.
+
 The [Ralph loop](https://ghuntley.com/ralph/) keeps an agent going round on the same task. The Kahneman
-Loop is a single extra round, and only when the agent's own check says the story is wrong.
+Loop is a single extra round, and only when the evidence says the story is wrong.
 
 ## Use it
 
@@ -196,10 +223,9 @@ edited code (`Edit`, `MultiEdit`, `Write` or `NotebookEdit`, on anything but `.m
 files) in the repo a check passed in, after it passed, and ran no check since. Edits made through the
 shell count too: `sed -i`, `perl -i`, a redirect such as `cat > src/a.ts`, and a copy onto a file. A
 change the same command undoes (a backup copied back after a trial run) does not. Edits a script
-makes on its own, such as `python3 fix.py`, aren't seen. The hook only reads the transcript and never
-runs anything. To
-change what counts as a check, edit `CHECK_RE` at the top of
-[claude-code/stop-hook.mjs](claude-code/stop-hook.mjs).
+makes on its own, such as `python3 fix.py`, aren't seen. Unless you add `--check` (below), the hook
+only reads the transcript and never runs anything. To change what counts as a check, edit `CHECK_RE` at
+the top of [claude-code/stop-hook.mjs](claude-code/stop-hook.mjs).
 
 Claude rarely runs a check on its own. It runs `npm test 2>&1 | tail -20; echo "exit $?"`, or a whole
 chain in the background, so the command's exit code usually belongs to `tail` or `echo`. The hook
@@ -222,10 +248,25 @@ When it hands back, you see why Claude started working again:
 Kahneman Loop: `npm test` failed this turn, so Claude is taking another look before it finishes.
 ```
 
+**Let it look for itself (optional).** Add `--check` with your project's check, and a `timeout` (in
+seconds) longer than the check takes:
+
+```json
+{ "type": "command", "command": "node ~/kahneman-loop/claude-code/stop-hook.mjs --check 'npm test'", "timeout": 180 }
+```
+
+When Claude changed code in the project and no check of that code passed after the change (none ran,
+or the transcript doesn't say how it went), the hook runs that command in the project before Claude
+stops. A failure goes back to Claude once, with the end of its output; a pass lets Claude stop, and
+also clears an out-of-date pass. A check that never started (exit 126 or 127) or ran past `--timeout`
+(default 120 seconds) says nothing and hands back nothing. Those stops wait for the check to finish:
+on every Claude Code session on our machine (70 sessions, 9,126 stops), the free scan below says that
+is 4% of stops. Without `--check` the hook runs nothing.
+
 ### Your own agent harness: copy one file
 
-Copy [kahneman-loop.ts](kahneman-loop.ts) into your harness. Node 22.6+ runs it as is, and any TypeScript
-toolchain compiles it. There are three touch points:
+Copy [kahneman-loop.ts](kahneman-loop.ts) into your harness. Node 22.18+ runs it as is (22.6+ with
+`--experimental-strip-types`), and any TypeScript toolchain compiles it. There are three touch points:
 
 ```ts
 import { CheckLedger, jobVerdict, runTurnWithHandBack, verdict, withVerdict } from './kahneman-loop';
@@ -259,18 +300,36 @@ const { reply } = await runTurnWithHandBack({
 for (const f of ledger.standingFailures()) session.failedBefore.add(f.key); // still failing as the turn ends
 ```
 
+To let your harness look for itself, pass `look` to `runTurnWithHandBack`. It runs when the code changed
+with no check after it (`ledger.unchecked()`) and none of the agent's checks is failing, and once more on
+the answer after a hand-back it bought, to judge it:
+
+```ts
+const { reply, outcome } = await runTurnWithHandBack({
+  // ...as above
+  look: async () => {
+    const t = await runTests(workspace); // null when you could not look
+    if (!t) return null;
+    return { key: 'npm test', saw: t.ok ? null : `npm test, run after your reply, failed: ${t.summary}` };
+  },
+});
+// outcome, after a hand-back: 'confirmed' | 'contradicted' | 'unchecked' (judgeAnswer)
+```
+
 If your loop doesn't fit `runTurnWithHandBack`, call `handBack({ failures: ledger.standingFailures(),
 stale: ledger.staleChecks(), alreadyHandedBack })` where your turn ends. It returns the message to
-send, or `null`. A standing failure goes back before an out-of-date pass. Pass `failedBefore`, the
+send, or `null`. A standing failure goes back first, then your harness's own `look`, then an out-of-date
+pass. After the answer, `judgeAnswer` says what fresh evidence makes of it. Pass `failedBefore`, the
 keys still failing at the end of an earlier turn, so a repeat failure asks for the cause; the ledger
 starts fresh each turn, so the session keeps these. Pass `recheck`
 to name how your harness runs the check again, and `note` for anything that gets past the failure
 (a saved test login, say). The note goes in exactly as you write it; failure names are clipped and lose
-their brackets, since they come from what the check saw. If your harness hands back evidence of its
-own, such as a page it loaded, end that message with `replyReplaced()` so the answer is written the
-same way. Show the user `recheckStatus({ failures, stale })` while the second round runs, or build your
-own line from its `kind` and `checks`: without it, an agent that seemed done and starts again reads as
-a stall.
+their brackets, since they come from what the check saw. If your harness has evidence of its own, such
+as a page it loaded, pass it as `look` rather than writing your own message: it goes back in the same
+order and ends with `replyReplaced()`, so the answer is written the same way. A clean look
+(`saw: null`) is a pass after the change, so it also clears an out-of-date pass. Show the user
+`recheckStatus({ failures, look, stale })` while the second round runs, or build your own line from its
+`kind` and `checks`: without it, an agent that seemed done and starts again reads as a stall.
 
 ## Results
 
@@ -323,8 +382,10 @@ against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md)
   2026-10-26, which ended by asking the agent to say what it changed and what is true now. It now asks
   for the whole reply instead (above). When a hand-back fires is unchanged, but whether the agent still
   goes back to work every time after one hasn't been replayed with the new wording.
-- **It can only be surprised by a check that ran.** A claim that nothing checked ("I tested it" when no
-  test ran) has no failure to hand back. The loop has its own WYSIATI: it sees what the harness recorded.
+- **Without a look of its own, it can only be surprised by a check that ran.** A claim that nothing
+  checked ("I tested it" when no test ran) has no failure to hand back unless your harness looks for
+  itself (`look`, or `--check` in Claude Code). Neither is in the numbers above, and the judging of the
+  answer isn't either. Even with a look, the loop has its own WYSIATI: it sees what it was given to check.
 - **System 1 and System 2 are an analogy.** They describe people, and Kahneman himself called them
   fictitious characters. Nothing here claims a model has them. The loop was measured, not derived from
   the analogy.
@@ -343,8 +404,8 @@ node eval/claude-code-scan.mjs            # every session in ~/.claude/projects
 
 At every point where Claude ended a turn, the scan runs the hook on the transcript as it stood and
 records whether it would have handed back. No model calls, and nothing leaves your machine. It prints
-totals and writes each would-be hand-back, with the prompt, the check and Claude's reply, to
-`claude-code-fires.jsonl`. Read them: a catch is a reply that says done while its own check says
+totals, including how often `--check` would run your check, and writes each would-be hand-back, with
+the prompt, the check and Claude's reply, to `claude-code-fires.jsonl`. Read them: a catch is a reply that says done while its own check says
 otherwise.
 
 We ran it on 14 sessions of our own work on VibeKit (3,028 turns, 4,413 stops, 2,126 with a check in

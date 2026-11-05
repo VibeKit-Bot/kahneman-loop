@@ -18,6 +18,12 @@
  *      to the agent as one message, once, and the answer to that message is
  *      the reply the user reads. Never a loop.
  *
+ * And one for what neither can see, not in the replay: when the code changed
+ * and nothing the agent ran checked it since, the harness looks for itself
+ * (`look`: loads the page, runs the tests) and a failure goes back the same
+ * way, once. The answer a hand-back buys is judged on fresh evidence
+ * (`judgeAnswer`), with no model call.
+ *
  * Zero dependencies. Copy this file into your harness. Node 22.6+ runs it as
  * is (type stripping); any TypeScript toolchain compiles it.
  */
@@ -112,6 +118,11 @@ export class CheckLedger {
     this.runs.push({ key, ok, detail });
   }
 
+  /** How many check runs are recorded: a mark for `passedAfter`, taken when you hand back. */
+  get size(): number {
+    return this.runs.length;
+  }
+
   /** The agent changed code (an edit, a patch, a write). Leave out docs and notes (`isDocPath`), which rarely affect a check. */
   recordEdit(what: string): void {
     this.edits.push({ what, after: this.runs.length });
@@ -150,6 +161,67 @@ export class CheckLedger {
         return { key, ok: true, detail: `passed, then you changed ${changed.slice(0, 3).join(', ')}${more}` };
       });
   }
+
+  /**
+   * The code changes no check has run after: every change when no check ran
+   * at all. Nothing the agent saw says anything about them, so this is when a
+   * harness that can look for itself should (`look` in runTurnWithHandBack).
+   */
+  unchecked(): string[] {
+    return [...new Set(this.edits.filter(e => e.after === this.runs.length).map(e => e.what))];
+  }
+
+  /**
+   * Standing failures whose latest run came after the last code change. Only
+   * these speak about the code as it is now: a failure from before a repair
+   * is about a version that no longer exists.
+   */
+  freshFailures(): CheckRun[] {
+    const since = this.edits[this.edits.length - 1]?.after ?? 0;
+    const latest = new Map<string, number>();
+    this.runs.forEach((run, i) => latest.set(run.key, i));
+    return [...latest.values()].filter(i => i >= since && !this.runs[i].ok).map(i => this.runs[i]);
+  }
+
+  /**
+   * Did every one of `keys` run again at or after `mark` (`size` when you
+   * handed back) and after the last code change, and pass? False for no keys:
+   * nothing was checked.
+   */
+  passedAfter(keys: readonly string[], mark: number): boolean {
+    const since = Math.max(mark, this.edits[this.edits.length - 1]?.after ?? 0);
+    const latest = new Map<string, number>();
+    this.runs.forEach((run, i) => latest.set(run.key, i));
+    return keys.length > 0 && keys.every(k => {
+      const i = latest.get(k);
+      return i !== undefined && i >= since && this.runs[i].ok;
+    });
+  }
+}
+
+/**
+ * What your harness saw when it looked for itself: loaded the page, ran the
+ * test suite, parsed the files the turn wrote. The agent's own checks only
+ * cover what it chose to run, and an agent that ran nothing has nothing to be
+ * surprised by. Your harness can look anyway.
+ */
+export interface Look {
+  /** What the harness ran, as a subject: "npm test", "a render of the live page". */
+  key: string;
+  /**
+   * Hard evidence the reply is false, as one sentence with no final period,
+   * saying what the harness did and what it saw ("npm test, run after your
+   * reply, failed: 2 failing in login.test.ts"). It goes in exactly as given,
+   * so clip it and strip brackets from anything the check read off the page.
+   * Null when the harness looked and found nothing wrong.
+   */
+  saw: string | null;
+  /**
+   * What the agent should do about it, in place of the default ("That is not
+   * done ... Fix the cause and <recheck> ..."), when your harness knows
+   * better (a deploy still running: say so and wait for it).
+   */
+  ask?: string;
 }
 
 // Brackets are stripped because the hand-back is itself one bracketed message.
@@ -194,7 +266,9 @@ export function replyReplaced(language?: string): string {
  */
 export function handBack(input: {
   failures: CheckRun[];
-  /** `ledger.staleChecks()`. Handed back only when nothing is failing. */
+  /** What your harness saw when it looked for itself (Look). Handed back when the agent's own checks are not failing. A clean look (`saw: null`) is a check after the change that passed, so it hands back nothing and clears `stale`. */
+  look?: Look;
+  /** `ledger.staleChecks()`. Handed back only when nothing is failing and no clean look ran. */
   stale?: CheckRun[];
   alreadyHandedBack: boolean;
   /**
@@ -241,7 +315,12 @@ export function handBack(input: {
       `${replyReplaced(input.language)}]`
     );
   }
-  if (input.stale?.length) {
+  if (input.look?.saw) {
+    const ask = input.look.ask?.trim() ||
+      `That is not done, whatever the reply says. Fix the cause and ${input.recheck || 'run the check again'}. If you cannot fix it, say plainly that it failed and why.`;
+    return `[System: ${input.look.saw}.${note} ${ask} ${replyReplaced(input.language)}]`;
+  }
+  if (input.stale?.length && input.look?.saw !== null) {
     return (
       `[System: you changed the code after your own check passed: ${named(input.stale)}.${note} That pass checked the code before the change, so it does not show the change works. ` +
       `Before you say it works, ${input.recheck || 'run the check again'}. If you cannot, say plainly that the change is not checked. ` +
@@ -251,8 +330,43 @@ export function handBack(input: {
   return null;
 }
 
+/**
+ * What fresh evidence says about the answer a hand-back bought. Nothing
+ * looked at that answer at first, and in our first backtest (2026-10-26) one
+ * still carried the claim the hand-back had disproved. No model call and no
+ * rewrite: use the outcome to decide what the next turn starts from, or what
+ * to show under the reply.
+ *
+ * Fresh means about the code the answer describes. A failure recorded before
+ * the agent's last change is about a version that no longer exists, so it
+ * never contradicts the repair: it leaves the answer unchecked. A check
+ * hand-back is confirmed only when the handed-back checks ran again after the
+ * last change and passed (`ledger.passedAfter`); a look hand-back only when
+ * the harness looked again and found nothing.
+ */
+export type AnswerOutcome = 'confirmed' | 'contradicted' | 'unchecked';
+export function judgeAnswer(input: {
+  /** What the hand-back was about: a failed check of the agent's, a stale pass, or your harness's look. */
+  handedBack: 'check' | 'stale' | 'look';
+  /** False when what your checks see is not the version the answer describes (a change still waiting to deploy). Default true. */
+  current?: boolean;
+  /** Failed checks standing after the answer (`ledger.standingFailures()`), and how many of them ran after the last change (`ledger.freshFailures()`). */
+  standing: number;
+  fresh: number;
+  /** `ledger.passedAfter(<the handed-back keys>, <ledger.size when you handed back>)`. */
+  checkedFinal: boolean;
+  /** Your harness's look after the answer, when it looked again; null or left out when it could not. */
+  lookAgain?: Look | null;
+}): AnswerOutcome {
+  if (input.current === false) return 'unchecked';
+  if (input.fresh > 0 || input.lookAgain?.saw) return 'contradicted';
+  if (input.standing > 0) return 'unchecked';
+  if (input.handedBack !== 'look') return input.checkedFinal ? 'confirmed' : 'unchecked';
+  return input.lookAgain && input.lookAgain.saw === null ? 'confirmed' : 'unchecked';
+}
+
 export interface RecheckStatus {
-  kind: 'failed' | 'stale';
+  kind: 'failed' | 'look' | 'stale';
   /** The checks being looked at again, at most two. */
   checks: string[];
   /** A plain English line to show the user. */
@@ -262,13 +376,18 @@ export interface RecheckStatus {
 /**
  * What to show the user while a hand-back runs. The agent seemed to be done
  * and is working again; without a word, that reads as a stall or a second
- * answer nobody asked for. Same order as handBack: a failure before a stale
- * pass. `kind` and `checks` are there for a harness that writes its own copy
- * or shows it in the user's language. Null when there is nothing to hand back.
+ * answer nobody asked for. Same order as handBack: a failure, then a look,
+ * then a stale pass. `kind` and `checks` are there for a harness that writes
+ * its own copy or shows it in the user's language. Null when there is
+ * nothing to hand back.
  */
-export function recheckStatus(input: { failures: CheckRun[]; stale?: CheckRun[] }): RecheckStatus | null {
+export function recheckStatus(input: { failures: CheckRun[]; look?: Look; stale?: CheckRun[] }): RecheckStatus | null {
+  if (!input.failures.length && input.look?.saw) {
+    const checks = [clip(input.look.key, 60)];
+    return { kind: 'look', checks, text: `Rechecking: ${checks[0]} found a problem after the reply, so the agent is taking another look before it replies.` };
+  }
   const failed = input.failures.length > 0;
-  const runs = failed ? input.failures : input.stale ?? [];
+  const runs = failed ? input.failures : input.look?.saw === null ? [] : input.stale ?? [];
   if (!runs.length) return null;
   const checks = runs.slice(0, 2).map(r => clip(r.key, 60));
   const named = checks.join(' and ');
@@ -281,7 +400,8 @@ export function recheckStatus(input: { failures: CheckRun[]; stale?: CheckRun[] 
  * The whole pattern for a harness that runs a turn as a function. `run` sends
  * messages to your model and returns its final text (running tools as it
  * goes, and recording checks and code changes into `ledger`). Returns the
- * text the user should read.
+ * text the user should read and, after a hand-back, what fresh evidence says
+ * about it (judgeAnswer).
  */
 export async function runTurnWithHandBack<M>(opts: {
   messages: M[];
@@ -292,16 +412,52 @@ export async function runTurnWithHandBack<M>(opts: {
   language?: string;
   /** Keys of checks still failing at the end of an earlier turn (see handBack). */
   failedBefore?: readonly string[];
+  /** How your harness runs a check again (see handBack). */
+  recheck?: string;
+  /**
+   * Your harness's own look (Look), for a turn whose code changed with no
+   * check after it (`ledger.unchecked()`) and no check of the agent's still
+   * failing. Return null when it could not look. A clean look is a check after
+   * the change like any other, so it clears a stale pass: make it one that
+   * catches a broken change (the test suite), not only a page load. After a
+   * look hand-back it runs once more, on the answer, to judge it.
+   */
+  look?: (reply: string) => Promise<Look | null>;
   /** Show the user that the agent is rechecking (recheckStatus), before the second round starts. */
   onRecheck?: (status: RecheckStatus) => void;
-}): Promise<{ reply: string; handedBack: boolean }> {
+}): Promise<{ reply: string; handedBack: boolean; outcome?: AnswerOutcome }> {
+  const { ledger } = opts;
+  // A look that throws is a look that could not run: it never breaks the turn.
+  const lookAt = async (text: string): Promise<Look | null> => {
+    try {
+      return opts.look ? await opts.look(text) : null;
+    } catch {
+      return null;
+    }
+  };
   const reply = await opts.run(opts.messages);
-  const failures = opts.ledger.standingFailures();
-  const stale = opts.ledger.staleChecks();
-  const fact = handBack({ failures, stale, alreadyHandedBack: false, language: opts.language, failedBefore: opts.failedBefore });
+  const failures = ledger.standingFailures();
+  let stale = ledger.staleChecks();
+  let look: Look | undefined;
+  if (!failures.length && opts.look && ledger.unchecked().length) {
+    const seen = await lookAt(reply);
+    if (seen?.saw) look = seen;
+    else if (seen) stale = [];
+  }
+  const fact = handBack({ failures, look, stale, alreadyHandedBack: false, language: opts.language, failedBefore: opts.failedBefore, recheck: opts.recheck });
   if (!fact) return { reply, handedBack: false };
-  const status = recheckStatus({ failures, stale });
+  const status = recheckStatus({ failures, look, stale });
   if (status) opts.onRecheck?.(status);
+  const mark = ledger.size;
   const answer = await opts.run([...opts.messages, ...opts.continueWith(reply, fact)]);
-  return { reply: answer, handedBack: true };
+  const handedBack = failures.length ? 'check' : look ? 'look' : 'stale';
+  const keys = (failures.length ? failures : stale).map(f => f.key);
+  const outcome = judgeAnswer({
+    handedBack,
+    standing: ledger.standingFailures().length,
+    fresh: ledger.freshFailures().length,
+    checkedFinal: handedBack !== 'look' && ledger.passedAfter(keys, mark),
+    lookAgain: handedBack === 'look' ? await lookAt(answer) : undefined,
+  });
+  return { reply: answer, handedBack: true, outcome };
 }
