@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkRuns, parseArgs, readTurn, splitShell, standingFailures } from '../claude-code/stop-hook.mjs';
+import { checkRuns, parseArgs, readTurn, runCheck, splitShell, standingFailures } from '../claude-code/stop-hook.mjs';
 
 const HOOK = fileURLToPath(new URL('../claude-code/stop-hook.mjs', import.meta.url));
 let n = 0;
@@ -343,6 +343,23 @@ test('--check: it runs only when no passing check came after the change, and a p
   const [f, cf] = call('npm test');
   const failed = [prompt('go'), ce, result(e, 'ok', false), cf, result(f, 'Exit code 1\n1 failing', true), say('Fixed.')];
   assert.match(JSON.parse(runHook(failed, at, ['--check', 'exit 0'])).reason, /your own check this turn is still failing/, 'its own failure first, and the check does not run');
+});
+
+test('--check stops what the check started, when it exits and when it times out', { skip: process.platform === 'win32' }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kahneman-check-'));
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const gone = async pid => { for (let i = 0; i < 40 && alive(pid); i++) await new Promise(r => setTimeout(r, 50)); return !alive(pid); };
+  const child = name => Number(readFileSync(join(dir, name), 'utf8'));
+  const cases = [
+    ['holds-output', 'sleep 30 & echo $! > holds-output; exit 0', 0],
+    ['quiet', 'sleep 30 >/dev/null 2>&1 & echo $! > quiet; exit 3', 3],
+    ['timed-out', 'sleep 30 & echo $! > timed-out; sleep 30', null],
+  ];
+  for (const [name, command, code] of cases) {
+    const r = await runCheck(command, dir, 2000);
+    assert.equal(r.code, code, name);
+    assert.ok(await gone(child(name)), `${name}: the background child is stopped`);
+  }
 });
 
 test('--check and --timeout are read either way', () => {
