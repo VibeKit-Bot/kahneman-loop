@@ -120,6 +120,53 @@ test('hand-back: a check that also failed on an earlier turn asks for the cause 
   assert.equal(handBack({ failures: [], stale, alreadyHandedBack: false, failedBefore: ['npm test'] }), handBack({ failures: [], stale, alreadyHandedBack: false }), 'a stale pass is not a repeat failure');
 });
 
+test('hand-back: a check that stopped before what it tests is not checked, never failed', () => {
+  const wall = { key: 'click "Orders"', ok: false, detail: 'ended on a sign-in form', reached: false };
+  const fact = handBack({ failures: [wall], alreadyHandedBack: false, recheck: 'render the page again', note: 'A saved sign-in is "staff".', language: 'German' })!;
+  assert.match(fact, /^\[System: your own check this turn stopped before it reached what it was meant to test: click "Orders" \(ended on a sign-in form\)\. A saved sign-in is "staff"\. /, 'the harness note right after what stopped it');
+  assert.doesNotMatch(fact, /came back failed|A failed check/, 'nothing failed');
+  assert.match(fact, /shows nothing about the change, working or broken\. Look at where it stopped\. If your change should have put that there, or cleared what was in the way, that is the bug: fix it\. /);
+  assert.match(fact, /Otherwise get the check past that point and render the page again\. If you cannot, say plainly that the change is not checked yet, why, and what would let you check it\. /);
+  assert.ok(fact.endsWith(`${replyReplaced('German')}]`));
+  assert.doesNotMatch(fact, /earlier turn/);
+  const again = handBack({ failures: [wall], alreadyHandedBack: false, failedBefore: ['click "Orders"'] })!;
+  assert.match(again, /It stopped at the same point on an earlier turn too, so do not run it again unchanged unless you changed what stopped it\. Look at where/);
+  assert.equal(handBack({ failures: [wall], alreadyHandedBack: true }), null, 'still once a turn');
+  // One check that reached the change and failed outweighs any that stopped short.
+  const broke = { key: 'npm test', ok: false, detail: '1 failing' };
+  const mixed = handBack({ failures: [wall, broke], alreadyHandedBack: false, failedBefore: ['click "Orders"'] })!;
+  assert.match(mixed, /^\[System: your own check this turn came back failed: npm test \(1 failing\); click "Orders" \(ended on a sign-in form\)\. A failed check/, 'the real failure first, and a repeat that stopped short is not a repeat failure');
+  assert.equal(handBack({ failures: [{ ...wall, reached: true }], alreadyHandedBack: false }), handBack({ failures: [{ key: wall.key, ok: false, detail: wall.detail }], alreadyHandedBack: false }), 'reached defaults to true');
+  assert.deepEqual(recheckStatus({ failures: [wall] }),
+    { kind: 'unreached', checks: ['click "Orders"'], text: 'Rechecking: click "Orders" could not get to what it tests this turn, so the agent is taking another look before it replies.' });
+  assert.equal(recheckStatus({ failures: [wall, broke] })!.kind, 'failed');
+});
+
+test('the ledger: a check that stopped short stands, but says nothing about the code', async () => {
+  const l = new CheckLedger();
+  l.recordEdit('src/orders.ts');
+  l.record('click "Orders"', false, 'ended on a sign-in form', { reached: false });
+  assert.deepEqual(l.standingFailures(), [{ key: 'click "Orders"', ok: false, detail: 'ended on a sign-in form', reached: false }]);
+  assert.deepEqual(l.freshFailures(), [], 'not evidence against the change');
+  assert.deepEqual(l.unchecked(), [], 'but it did run after the change');
+  l.record('click "Orders"', true);
+  assert.deepEqual(l.standingFailures(), [], 'a later run that gets through and passes clears it');
+  // Whole turn: a check stops short, the answer runs it again and it stops short again.
+  const t = new CheckLedger();
+  const sent: string[][] = [];
+  const run = async (m: string[]) => {
+    sent.push(m);
+    t.recordEdit('src/orders.ts');
+    t.record('click "Orders"', false, 'ended on a sign-in form', { reached: false });
+    return `reply ${sent.length}`;
+  };
+  const statuses: string[] = [];
+  const out = await runTurnWithHandBack({ messages: ['go'], ledger: t, run, continueWith: (r, f) => [r, f], onRecheck: s => statuses.push(s.kind) });
+  assert.ok(sent[1][2].startsWith('[System: your own check this turn stopped before it reached'));
+  assert.deepEqual(statuses, ['unreached']);
+  assert.equal(out.outcome, 'unchecked', 'stopping short again neither contradicts nor confirms the answer');
+});
+
 test('runTurnWithHandBack: the continuation is the reply, and there is one continuation at most', async () => {
   const l = new CheckLedger();
   const sent: string[][] = [];

@@ -102,6 +102,14 @@ export interface CheckRun {
   ok: boolean;
   /** What failed, in a few words. Goes into the hand-back verbatim. */
   detail?: string;
+  /**
+   * False when the check stopped before what it was meant to test: a sign-in
+   * form, a control it could not find on the page, something covering it. It
+   * then shows nothing about the change, working or broken, so it is handed
+   * back as not checked rather than failed (handBack), and a fresh one leaves
+   * an answer unchecked rather than contradicted. Default true.
+   */
+  reached?: boolean;
 }
 
 /**
@@ -114,8 +122,9 @@ export class CheckLedger {
   /** Each code change, with how many checks had run before it. */
   private edits: { what: string; after: number }[] = [];
 
-  record(key: string, ok: boolean, detail?: string): void {
-    this.runs.push({ key, ok, detail });
+  /** Pass `{ reached: false }` for a run that stopped before what it tests (CheckRun.reached). */
+  record(key: string, ok: boolean, detail?: string, opts: { reached?: boolean } = {}): void {
+    this.runs.push(opts.reached === false ? { key, ok, detail, reached: false } : { key, ok, detail });
   }
 
   /** How many check runs are recorded: a mark for `passedAfter`, taken when you hand back. */
@@ -172,15 +181,16 @@ export class CheckLedger {
   }
 
   /**
-   * Standing failures whose latest run came after the last code change. Only
-   * these speak about the code as it is now: a failure from before a repair
-   * is about a version that no longer exists.
+   * Standing failures whose latest run came after the last code change and
+   * reached what it tests. Only these speak about the code as it is now: a
+   * failure from before a repair is about a version that no longer exists,
+   * and one that stopped short (`reached: false`) is about no version at all.
    */
   freshFailures(): CheckRun[] {
     const since = this.edits[this.edits.length - 1]?.after ?? 0;
     const latest = new Map<string, number>();
     this.runs.forEach((run, i) => latest.set(run.key, i));
-    return [...latest.values()].filter(i => i >= since && !this.runs[i].ok).map(i => this.runs[i]);
+    return [...latest.values()].filter(i => i >= since && !this.runs[i].ok && this.runs[i].reached !== false).map(i => this.runs[i]);
   }
 
   /**
@@ -263,6 +273,17 @@ export function replyReplaced(language?: string): string {
  * chat check whose reply never came failed on six turns of one day, and each
  * hand-back bought one more run of it, one more honest "still failing", and
  * no look at why.
+ *
+ * A check that stopped before what it tests (`reached: false`) is handed back
+ * as not checked, never as failed, when nothing else failed. On our traffic
+ * (2026-10-26 to 11-09) 41 of 70 hand-backs were such a check: a sign-in form,
+ * a control not on the page, something covering it. Told "came back failed,
+ * fix the cause", the agent had nothing to fix: of all 70 only 21% led to a
+ * code change, about a quarter of the 41 ended on a passing check, and a third
+ * of the answers after a missing control said done anyway. What it needs instead:
+ * whether where it stopped is the bug (the change should have put that
+ * control there), else how to get past it, else to say plainly the change is
+ * not checked.
  */
 export function handBack(input: {
   failures: CheckRun[];
@@ -298,19 +319,34 @@ export function handBack(input: {
       .join('; ');
   const note = input.note?.trim() ? ` ${input.note.trim()}` : '';
   const before = new Set(input.failedBefore ?? []);
-  const repeated = input.failures.filter(f => before.has(f.key));
+  const reached = input.failures.filter(f => f.reached !== false);
+  if (input.failures.length && !reached.length) {
+    const again = input.failures.some(f => before.has(f.key))
+      ? 'It stopped at the same point on an earlier turn too, so do not run it again unchanged unless you changed what stopped it. '
+      : '';
+    return (
+      `[System: your own check this turn stopped before it reached what it was meant to test: ${named(input.failures)}.${note} ` +
+      `A check that stops there shows nothing about the change, working or broken. ${again}` +
+      'Look at where it stopped. If your change should have put that there, or cleared what was in the way, that is the bug: fix it. ' +
+      `Otherwise get the check past that point and ${input.recheck || 'run the check again'}. ` +
+      `If you cannot, say plainly that the change is not checked yet, why, and what would let you check it. ` +
+      `${replyReplaced(input.language)}]`
+    );
+  }
+  const failures = [...reached, ...input.failures.filter(f => f.reached === false)];
+  const repeated = reached.filter(f => before.has(f.key));
   if (repeated.length) {
     return (
-      `[System: your own check this turn came back failed: ${named([...repeated, ...input.failures.filter(f => !before.has(f.key))])}.${note} ` +
+      `[System: your own check this turn came back failed: ${named([...repeated, ...failures.filter(f => !repeated.includes(f))])}.${note} ` +
       'It failed on an earlier turn too. A failed check is not done, whatever the reply says. ' +
       `Look for the cause before you run it again unchanged: read the error, the logs and the code the check goes through. Fix what you find, then ${input.recheck || 'run the check again'}. ` +
       `If you cannot find or fix the cause, say plainly that it still fails, what you tried and what you need to fix it. ` +
       `${replyReplaced(input.language)}]`
     );
   }
-  if (input.failures.length) {
+  if (failures.length) {
     return (
-      `[System: your own check this turn came back failed: ${named(input.failures)}.${note} A failed check is not done, whatever the reply says. ` +
+      `[System: your own check this turn came back failed: ${named(failures)}.${note} A failed check is not done, whatever the reply says. ` +
       `Fix the cause and ${input.recheck || 'run the check again'}. If you cannot fix it, say plainly that it failed and why. ` +
       `${replyReplaced(input.language)}]`
     );
@@ -366,7 +402,8 @@ export function judgeAnswer(input: {
 }
 
 export interface RecheckStatus {
-  kind: 'failed' | 'look' | 'stale';
+  /** `unreached`: every failing check stopped before what it tests (CheckRun.reached). */
+  kind: 'failed' | 'unreached' | 'look' | 'stale';
   /** The checks being looked at again, at most two. */
   checks: string[];
   /** A plain English line to show the user. */
@@ -391,6 +428,9 @@ export function recheckStatus(input: { failures: CheckRun[]; look?: Look; stale?
   if (!runs.length) return null;
   const checks = runs.slice(0, 2).map(r => clip(r.key, 60));
   const named = checks.join(' and ');
+  if (failed && runs.every(r => r.reached === false)) {
+    return { kind: 'unreached', checks, text: `Rechecking: ${named} could not get to what it tests this turn, so the agent is taking another look before it replies.` };
+  }
   return failed
     ? { kind: 'failed', checks, text: `Rechecking: ${named} failed this turn, so the agent is taking another look before it replies.` }
     : { kind: 'stale', checks, text: `Rechecking: the code changed after ${named} passed, so the agent is checking again before it replies.` };

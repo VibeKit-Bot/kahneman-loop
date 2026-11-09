@@ -281,6 +281,8 @@ if (!shot.ok) return withVerdict(shot, verdict.notChecked('the page did not rend
 
 // 2. Also in the executor: record every check the agent runs, and every code change (one ledger per turn).
 ledger.record(`click ${selector}`, changed, changed ? undefined : 'the click did not change anything');
+// A check that never got to what it tests (a login form, a control not on the page) is not checked, not failed:
+if (!found) ledger.record(`click ${selector}`, false, 'no such control on the page', { reached: false });
 ledger.recordEdit(file.path); // not for docs or notes
 if (changed) session.failedBefore.delete(`click ${selector}`); // a pass clears an earlier turn's failure
 
@@ -323,7 +325,11 @@ pass. After the answer, `judgeAnswer` says what fresh evidence makes of it. Pass
 keys still failing at the end of an earlier turn, so a repeat failure asks for the cause; the ledger
 starts fresh each turn, so the session keeps these. Pass `recheck`
 to name how your harness runs the check again, and `note` for anything that gets past the failure
-(a saved test login, say). The note goes in exactly as you write it; failure names are clipped and lose
+(a saved test login, say). Record a check that stopped before what it tests with `{ reached: false }`:
+when nothing else failed it goes back as not checked, with "look at where it stopped, get past it, or
+say the change is not checked", instead of "fix the cause", and a fresh one leaves the answer
+`unchecked`, never `contradicted`. On our traffic 41 of 70 hand-backs were such a check, and told to fix
+a cause there was none to fix. The note goes in exactly as you write it; failure names are clipped and lose
 their brackets, since they come from what the check saw. If your harness has evidence of its own, such
 as a page it loaded, pass it as `look` rather than writing your own message: it goes back in the same
 order and ends with `replyReplaced()`, so the answer is written the same way. A clean look
