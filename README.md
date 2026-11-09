@@ -131,7 +131,11 @@ doesn't show (`verdict.changeSaved()`):
 ```
 
 It doesn't say nothing has run, because a hook on one result can't know that, and it doesn't ask for a check,
-which would buy one after every edit. **This line isn't measured yet**: the results above don't include it.
+which would buy one after every edit. **So far it hasn't worked on VibeKit**: in its first week there
+(from 2026-11-02), turns that ended with nothing checked after the last change rose from 21.7% to 32.4%,
+and more replies hedged instead. Other changes shipped that week too (a model router, a runtime
+upgrade), so this isn't a clean comparison; its registered read is 2026-11-16. The results below don't
+include it.
 
 **2. Raise the surprise: hand back once.** When the agent is about to end its turn and one of its own
 checks from this turn is still failing (no later run of the same check passed), the turn isn't over. The
@@ -169,6 +173,15 @@ came failed on six turns of one day, and each hand-back bought one more run and 
 failing", with no look at why. So when the same check was still failing at the end of an earlier turn,
 the hand-back says so and asks the agent to look for the cause before it runs the check again
 unchanged, or to say what it tried and what it needs.
+
+A check that stopped before what it tests gets a hand-back of its own. A sign-in form, a button that
+isn't on the page or something covering it says nothing about the change, working or broken. On
+VibeKit from 2026-10-26 to 11-09, 41 of 70 hand-backs were such a check, and told "came back failed,
+fix the cause", the agent had no cause to fix: of all 70, only 21% led to a code change. Record such
+a run with `reached: false`, and when nothing else failed, the hand-back says the change is not
+checked: look at where the check stopped (if the change should have put that button there, that is
+the bug), get past it, or say plainly that the change isn't checked yet. It doesn't count against the
+answer either: `judgeAnswer` reads it as unchecked, not contradicted.
 
 **3. Look for itself, when nothing checked the change.** The loop can only be surprised by a check that
 ran. An agent that edited code and ran nothing has nothing in view to contradict "done", and that's
@@ -325,11 +338,8 @@ pass. After the answer, `judgeAnswer` says what fresh evidence makes of it. Pass
 keys still failing at the end of an earlier turn, so a repeat failure asks for the cause; the ledger
 starts fresh each turn, so the session keeps these. Pass `recheck`
 to name how your harness runs the check again, and `note` for anything that gets past the failure
-(a saved test login, say). Record a check that stopped before what it tests with `{ reached: false }`:
-when nothing else failed it goes back as not checked, with "look at where it stopped, get past it, or
-say the change is not checked", instead of "fix the cause", and a fresh one leaves the answer
-`unchecked`, never `contradicted`. On our traffic 41 of 70 hand-backs were such a check, and told to fix
-a cause there was none to fix. The note goes in exactly as you write it; failure names are clipped and lose
+(a saved test login, say). Record a check that stopped before what it tests with `{ reached: false }`,
+so it goes back as not checked (above). The note goes in exactly as you write it; failure names are clipped and lose
 their brackets, since they come from what the check saw. If your harness has evidence of its own, such
 as a page it loaded, pass it as `look` rather than writing your own message: it goes back in the same
 order and ends with `replyReplaced()`, so the answer is written the same way. A clean look
@@ -360,6 +370,9 @@ against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md)
   back to fix what failed; spread over every reply, it's about 0.3 seconds, under 1%. VibeKit already
   runs the same hand-back in production, so these are the real tokens and seconds of those rounds
   over the same three weeks, scaled to how often the Kahneman Loop's hand-back fires.
+- **In production it costs about half that.** On VibeKit from 2026-11-02 to 11-09, the new hand-back
+  rounds came to 8 in 1,967 turns: +0.49% tokens and +0.37% time, about 0.2 seconds a turn (the week
+  before, 1 in 541 turns: +0.10% and +0.05%).
 - **No harm on good turns:** where the original reply was already right, the loop didn't add mistakes
   (8% needed correction today, 7% with the loop).
 - **Reach:** about 6% of all turns were affected. Across all turns, that's about 1 in 200 replies
@@ -369,9 +382,17 @@ against what the tools really did. Full method: [eval/METHOD.md](eval/METHOD.md)
 
 - **Verdict text alone isn't proven.** Its confidence interval crosses zero. The clear win comes from
   verdicts plus the hand-back together.
-- **What happened after a hand-back wasn't measured.** In every sample the agent went back to work
+- **What happened after a hand-back wasn't replayed.** In every sample the agent went back to work
   instead of replying, so it never repeated the false claim. Its later reply was not replayed. If you
-  count only samples that ended in a reply, the rate is 28% today and 17% with the loop.
+  count only samples that ended in a reply, the rate is 28% today and 17% with the loop. Production
+  shows what came next, and it is weaker than going back to work suggests: of 70 hand-backs on VibeKit
+  from 2026-10-26 to 11-09 (leaving out 12 caused by a bug in VibeKit's own checker, since fixed), 21%
+  led to a code change; the check was run again and passed in 36%, failed again in 36%, and wasn't run
+  again in 29%. Most of the misses were checks that never reached the change, which now get their own
+  hand-back (above).
+- **The hand-back for a check that stopped short isn't measured yet.** It shipped on 2026-11-09 on the
+  evidence above. VibeKit's next read compares, before and after: answers that still say done, checks
+  that pass when run again, and the extra round's time.
 - **The data comes from one platform and one month.** The mix was app building, deploys and UI
   checks, with several models. Your traffic may differ, so [measure it](eval/).
 - **The judge is a model** (Claude Sonnet 5.5, a fixed rubric, blind to which arm wrote each reply).
